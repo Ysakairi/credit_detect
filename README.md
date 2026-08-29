@@ -8,7 +8,7 @@
 
 # 2. アーキテクチャ
 
-![credit_check.png](credit_check.png)
+![readme/credit_check.png](credit_check.png)
 
 ## 構成図 (システムフロー)
 
