@@ -1,0 +1,18 @@
+config {
+  type: "table",
+  schema: "dwh_prod",
+  name: "ulb_fraud_detection_train",
+  description: "Create table for training",
+  tags: ["initial_setup"],
+  dependencies: ["ulb_fraud_detection_converted"]
+}
+
+-- 初期設定(3) 学習用（Train）テーブルの作成
+-- 用途: 勾配ブースティング木モデルの実際の学習（分岐の作成）に使用する。
+-- 条件: Date が 37 から 50 までのデータ
+SELECT
+  *
+FROM
+  ${ref("ulb_fraud_detection_converted")} 
+WHERE
+  Date BETWEEN 37 AND 50;

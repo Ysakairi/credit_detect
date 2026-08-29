@@ -1,0 +1,11 @@
+# Dataform workflow settings
+
+# Project settings
+defaultProject: skir_sample_credit
+defaultDataset: dwh_prod
+defaultLocation: asia-northeast1
+
+# Compilation variables
+vars:
+  env: "prod"
+  reload_days: "3"

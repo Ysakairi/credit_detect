@@ -1,0 +1,40 @@
+main:
+  steps:
+    - init:
+        assign:
+         # Terraformの templatefile から値が注入される
+          - project_id: "${project_id}"
+          - region: "${region}"
+          - run_job_name: "daily-ingest-job"
+          - dataform_repo: "projects/${project_id}/locations/${region}/repositories/${dataform_repo}"
+
+    # Step 1: Cloud Run Jobs の実行
+    - run_ingestion_job:
+        call: googleapis.run.v1.namespaces.jobs.run
+        args:
+          name: ${"namespaces/" + project_id + "/jobs/" + run_job_name}
+        result: job_result
+
+    # Step 2: Dataform のコンパイル (mainブランチを指定)
+    - compile_dataform:
+        call: googleapis.dataform.v1beta1.projects.locations.repositories.compilationResults.create
+        args:
+          parent: ${dataform_repo}
+          body:
+            gitCommitish: "main"
+        result: compilation_result
+
+    # Step 3: Dataform の実行 (daily_batchタグのみ実行)
+    - execute_dataform:
+        call: googleapis.dataform.v1beta1.projects.locations.repositories.workflowInvocations.create
+        args:
+          parent: ${dataform_repo}
+          body:
+            compilationResult: ${compilation_result.name}
+            invocationConfig:
+              includedTags:
+                - "daily_batch" # ここでタグを絞る
+        result: invocation_result
+
+    - return_result:
+        return: ${invocation_result}

@@ -1,0 +1,56 @@
+config {
+  type: "operations",
+  schema: "dwh_prod",
+  name: "ulb_fraud_detection_model",
+  description: "Create model",
+  hasOutput: false,
+  tags: ["initial_setup"],
+  dependencies: ["ulb_fraud_detection_train", "ulb_fraud_detection_validation"]
+}
+
+-- 初期設定(4) モデルの作成
+
+CREATE OR REPLACE MODEL `${dataform.projectConfig.defaultDatabase}.${dataform.projectConfig.defaultSchema}.ulb_fraud_detection_model`
+-- 1. TRANSFORM句によるモデル内部での事前処理（Training-Serving Skewの防止）
+TRANSFORM(
+  -- Amount（取引金額）を標準化。モデル内部に平均と標準偏差が記憶される
+  ML.STANDARD_SCALER(Amount) OVER() AS Amount_scaled,
+  
+  -- 学習に不要な Timeと Dateを除外し、残りの全カラム（V1~V28, Hour, Class, is_validation）を取得
+  * EXCEPT(Amount, Time, Date)
+)
+-- 2. OPTIONS句によるハイパーパラメータと学習戦略の設定
+OPTIONS(
+  -- 勾配ブースティング木の分類モデルを指定
+  MODEL_TYPE = 'BOOSTED_TREE_CLASSIFIER',
+  
+  -- 予測対象のラベル（目的変数）のカラム名
+  INPUT_LABEL_COLS = ['Class'],
+  
+  -- 極端な不均衡データへの対策
+  -- ulb_fraud_detectionは不正使用率が極めて低いデータ
+  -- 不正データの重みを自動的に増やし、見落としを防ぐ
+  AUTO_CLASS_WEIGHTS = TRUE,
+  
+  -- データの分割方法に 'CUSTOM' を指定し、検証用データを明示的に指定
+  DATA_SPLIT_METHOD = 'CUSTOM',
+  DATA_SPLIT_COL = 'is_validation',
+  
+  -- 過学習を防ぐためのアーリーストッピング設定（明示的に記載）
+  EARLY_STOP = TRUE,
+  MAX_ITERATIONS = 50 -- 決定木の最大作成数
+) AS
+-- 3. 学習データの準備（TrainとValidationの結合）
+SELECT
+  *,
+  FALSE AS is_validation -- Trainデータは検証用ではない（学習用）として扱う
+FROM
+  `${dataform.projectConfig.defaultDatabase}.${dataform.projectConfig.defaultSchema}.ulb_fraud_detection_Train`
+
+UNION ALL
+
+SELECT
+  *,
+  TRUE AS is_validation -- Validationデータは検証用（アーリーストップ判定用）として扱う
+FROM
+  `${dataform.projectConfig.defaultDatabase}.${dataform.projectConfig.defaultSchema}.ulb_fraud_detection_Validation`;

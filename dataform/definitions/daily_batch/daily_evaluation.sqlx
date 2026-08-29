@@ -1,0 +1,27 @@
+config {
+  type: "table",
+  schema: "dwh_prod",
+  name: "ulb_fraud_detection_evaluation",
+  description: "Create table for evaluate model",
+  tags: ["daily_batch"],
+  dependencies: ["ulb_fraud_detection_predictions"]
+}
+
+-- 日次バッチ(4) モデル評価指標テーブルの作成
+-- データセット名はお使いのGCPプロジェクトに合わせて適宜変更してください
+
+SELECT
+  *
+FROM
+  ML.EVALUATE(
+    MODEL `${dataform.projectConfig.defaultDatabase}.${dataform.projectConfig.defaultSchema}.ulb_fraud_detection_model`,
+    (
+      -- 推論時と同じく、評価用（20日目以降）のデータを使って実際のClassと予測結果を比較評価する
+      SELECT
+        *
+      FROM
+        `${dataform.projectConfig.defaultDatabase}.${dataform.projectConfig.defaultSchema}.ulb_fraud_detection_converted`
+      WHERE
+        Date =< 31
+    )
+  );

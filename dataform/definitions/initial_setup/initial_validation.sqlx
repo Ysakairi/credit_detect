@@ -1,0 +1,18 @@
+config {
+  type: "table",
+  schema: "dwh_prod",
+  name: "ulb_fraud_detection_validation",
+  description: "Create table for validation",
+  tags: ["initial_setup"],
+  dependencies: ["ulb_fraud_detection_converted"]
+}
+
+-- 初期設定(2) 検証用（Validation）テーブルの作成
+-- 用途: 学習中の過学習の監視やハイパーパラメータの調整に使用する。
+-- 条件: Date(管理番号) が 32 から 36 までのデータ
+SELECT
+  *
+FROM
+  ${ref("ulb_fraud_detection_converted")} 
+WHERE
+  Date BETWEEN 32 AND 36;

@@ -1,0 +1,33 @@
+config {
+  type: "table",
+  schema: "dwh_prod",
+  name: "ulb_fraud_detection_predictions",
+  description: "Create table for predict model",
+  tags: ["daily_batch"],
+  dependencies: ["ulb_fraud_detection_converted"]
+}
+
+-- 日次バッチ(3) 推論（予測）結果テーブルの作成
+-- データセット名はお使いのGCPプロジェクトに合わせて適宜変更してください
+
+SELECT
+  -- 元データの全カラム（Time, Amount, V1~V28, Class, Date, Hourなど）を取得
+  * EXCEPT(predicted_Class_probs),
+  
+  -- ML.PREDICTによって自動生成される確率の配列（0である確率と1である確率）から、
+  -- Looker Studioで可視化しやすいように「不正(1)である確率(0.0〜1.0)」のみを抽出してカラム化
+  (SELECT prob FROM UNNEST(predicted_Class_probs) WHERE label = 1) AS fraud_probability
+
+FROM
+  ML.PREDICT(
+    MODEL `${dataform.projectConfig.defaultDatabase}.${dataform.projectConfig.defaultSchema}.ulb_fraud_detection_model`,
+    (
+      -- 日次バッチで取り込まれたデータ（Dateが1〜31のもの）を推論対象とする
+      SELECT
+        *
+      FROM
+        `${dataform.projectConfig.defaultDatabase}.${dataform.projectConfig.defaultSchema}.ulb_fraud_detection_converted`
+      WHERE
+        Date =< 31
+    )
+  );
