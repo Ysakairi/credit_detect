@@ -14,11 +14,19 @@ main:
 
     # Step 1: Cloud Run Jobs を起動（v1 jobs.run は非同期）
     - run_ingestion_job:
-        call: googleapis.run.v1.namespaces.jobs.run
-        args:
-          name: namespaces/${project_id}/jobs/daily-ingest-job
-          location: ${region}
-        result: job_execution
+        try:
+          call: googleapis.run.v1.namespaces.jobs.run
+          args:
+            name: namespaces/${project_id}/jobs/daily-ingest-job
+            location: ${region}
+          result: job_execution
+        retry:
+          predicate: $${retry.transient_errors}
+          max_retries: 5
+          backoff:
+            initial: 2
+            max_interval: 32
+            multiplier: 2
 
     - wait_for_job:
         call: sys.sleep
@@ -30,11 +38,19 @@ main:
           - poll_count: $${poll_count + 1}
 
     - get_job_status:
-        call: googleapis.run.v1.namespaces.executions.get
-        args:
-          name: $${job_execution.metadata.name}
-          location: ${region}
-        result: job_status
+        try:
+          call: googleapis.run.v1.namespaces.executions.get
+          args:
+            name: $${job_execution.metadata.name}
+            location: ${region}
+          result: job_status
+        retry:
+          predicate: $${retry.transient_errors}
+          max_retries: 5
+          backoff:
+            initial: 1
+            max_interval: 16
+            multiplier: 2
 
     - check_job_status:
         switch:
@@ -56,12 +72,20 @@ main:
           - poll_count: 0
 
     - compile_dataform:
-        call: googleapis.dataform.v1beta1.projects.locations.repositories.compilationResults.create
-        args:
-          parent: $${dataform_parent}
-          body:
-            gitCommitish: "main"
-        result: compilation_result
+        try:
+          call: googleapis.dataform.v1beta1.projects.locations.repositories.compilationResults.create
+          args:
+            parent: $${dataform_parent}
+            body:
+              gitCommitish: "main"
+          result: compilation_result
+        retry:
+          predicate: $${retry.transient_errors}
+          max_retries: 5
+          backoff:
+            initial: 2
+            max_interval: 32
+            multiplier: 2
 
     - wait_for_compilation:
         call: sys.sleep
@@ -73,10 +97,18 @@ main:
           - poll_count: $${poll_count + 1}
 
     - get_compilation:
-        call: googleapis.dataform.v1beta1.projects.locations.repositories.compilationResults.get
-        args:
-          name: $${compilation_result.name}
-        result: compilation_status
+        try:
+          call: googleapis.dataform.v1beta1.projects.locations.repositories.compilationResults.get
+          args:
+            name: $${compilation_result.name}
+          result: compilation_status
+        retry:
+          predicate: $${retry.transient_errors}
+          max_retries: 5
+          backoff:
+            initial: 1
+            max_interval: 16
+            multiplier: 2
 
     - check_compilation:
         switch:
@@ -94,16 +126,24 @@ main:
           - poll_count: 0
 
     - execute_dataform:
-        call: googleapis.dataform.v1beta1.projects.locations.repositories.workflowInvocations.create
-        args:
-          parent: $${dataform_parent}
-          body:
-            compilationResult: $${compilation_status.name}
-            invocationConfig:
-              includedTags:
-                - "daily_batch"
-              transitiveDependenciesIncluded: true
-        result: invocation_result
+        try:
+          call: googleapis.dataform.v1beta1.projects.locations.repositories.workflowInvocations.create
+          args:
+            parent: $${dataform_parent}
+            body:
+              compilationResult: $${compilation_status.name}
+              invocationConfig:
+                includedTags:
+                  - "daily_batch"
+                transitiveDependenciesIncluded: true
+          result: invocation_result
+        retry:
+          predicate: $${retry.transient_errors}
+          max_retries: 5
+          backoff:
+            initial: 2
+            max_interval: 32
+            multiplier: 2
 
     - wait_for_invocation:
         call: sys.sleep
@@ -115,10 +155,18 @@ main:
           - poll_count: $${poll_count + 1}
 
     - get_invocation:
-        call: googleapis.dataform.v1beta1.projects.locations.repositories.workflowInvocations.get
-        args:
-          name: $${invocation_result.name}
-        result: invocation_status
+        try:
+          call: googleapis.dataform.v1beta1.projects.locations.repositories.workflowInvocations.get
+          args:
+            name: $${invocation_result.name}
+          result: invocation_status
+        retry:
+          predicate: $${retry.transient_errors}
+          max_retries: 5
+          backoff:
+            initial: 1
+            max_interval: 16
+            multiplier: 2
 
     - check_invocation:
         switch:
