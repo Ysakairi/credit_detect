@@ -64,6 +64,20 @@ def _cosine(a: Sequence[float], b: Sequence[float]) -> float:
     return dot / (na * nb)
 
 
+def _tokens(text: str) -> set[str]:
+    blob = (text or "").lower()
+    ascii_toks = re.findall(r"[a-z0-9_]{2,}", blob)
+    cjk_runs = re.findall(r"[\u3040-\u30ff\u4e00-\u9fff]+", blob)
+    grams: List[str] = []
+    for run in cjk_runs:
+        grams.append(run)
+        if len(run) >= 2:
+            grams.extend(run[i : i + 2] for i in range(len(run) - 1))
+        if len(run) >= 3:
+            grams.extend(run[i : i + 3] for i in range(len(run) - 2))
+    return set(ascii_toks + grams)
+
+
 class InMemoryKnowledgeStore:
     """Local cosine search used by mock backend and unit tests."""
 
@@ -81,22 +95,18 @@ class InMemoryKnowledgeStore:
         return added
 
     def search(self, query: str, top_k: int = VECTOR_TOP_K) -> List[Dict[str, Any]]:
+        query_tokens = _tokens(query)
         scored: List[Dict[str, Any]] = []
-        q_emb = None
-        for doc in self.documents:
-            if doc.get("embedding"):
-                continue
-        # Prefer embeddings when present; otherwise token overlap.
-        query_tokens = set(re.findall(r"[A-Za-z0-9_]+|[\u3040-\u30ff\u4e00-\u9fff]+", query.lower()))
         for doc in self.documents:
             item = dict(doc)
             emb = doc.get("embedding")
-            if q_emb is not None and emb:
-                item["distance"] = 1.0 - _cosine(q_emb, emb)
-            else:
-                text = f"{doc.get('title', '')} {doc.get('content', '')}".lower()
-                overlap = sum(1 for tok in query_tokens if tok and tok in text)
-                item["distance"] = 1.0 / (1.0 + overlap)
+            if emb and any(emb):
+                # Unused unless embeddings are populated in mock tests.
+                item["distance"] = 1.0
+            doc_tokens = _tokens(f"{doc.get('title', '')} {doc.get('content', '')}")
+            overlap = len(query_tokens & doc_tokens)
+            title_hit = 1 if any(tok in (doc.get("title") or "").lower() for tok in query_tokens) else 0
+            item["distance"] = 1.0 / (1.0 + overlap + 2 * title_hit)
             scored.append(item)
         scored.sort(key=lambda d: d.get("distance", 1.0))
         return scored[:top_k]

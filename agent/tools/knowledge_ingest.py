@@ -17,10 +17,10 @@ def slugify(value: str) -> str:
 
 def infer_category(title: str, text: str) -> str:
     blob = f"{title}\n{text}".upper()
+    if "POL-SEC" in blob or "POL_SEC" in blob or "SOP" in blob or "EVALUAT" in blob or "PR-AUC" in blob:
+        return "POLICY"
     if "PCI" in blob or "DSS" in blob:
         return "PCI_DSS"
-    if "SOP" in blob or "EVALUAT" in blob or "PR-AUC" in blob:
-        return "POLICY"
     if "INCIDENT" in blob or "CARD TEST" in blob or "BIN" in blob:
         return "INCIDENT_CASE"
     return "POLICY"

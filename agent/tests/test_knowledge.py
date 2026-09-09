@@ -29,6 +29,19 @@ class KnowledgeTest(unittest.TestCase):
         self.assertTrue(hits)
         self.assertIn("0.85", hits[0]["content"])
 
+    def test_title_query_ranks_matching_manual(self):
+        store = InMemoryKnowledgeStore()
+        store.upsert(documents_from_text("カードテストのBIN攻撃", title="pci_dss_card_testing"))
+        store.upsert(
+            documents_from_text(
+                "第2条 即時監視: fraud_probability >= 0.85 かつ Amount >= 200",
+                title="pol_sec_2026_004",
+            )
+        )
+        hits = store.search("POL-SEC-2026-004 第2条の即時監視")
+        self.assertTrue(hits)
+        self.assertIn("pol_sec", hits[0]["title"])
+
 
 if __name__ == "__main__":
     unittest.main()
