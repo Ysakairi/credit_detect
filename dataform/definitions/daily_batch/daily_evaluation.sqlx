@@ -11,6 +11,8 @@ config {
 -- 推論と同じく、学習に未使用の疑似日付 1〜31 で評価する
 
 SELECT
+  CURRENT_DATE("Asia/Tokyo") AS evaluation_date,
+  CURRENT_TIMESTAMP() AS evaluated_at,
   *
 FROM
   ML.EVALUATE(

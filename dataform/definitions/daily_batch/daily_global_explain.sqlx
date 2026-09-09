@@ -1,0 +1,40 @@
+config {
+  type: "table",
+  schema: "dwh_prod",
+  name: "ulb_fraud_detection_global_explain",
+  description: "Tree SHAP global attributions for the fraud class (ML.GLOBAL_EXPLAIN)",
+  tags: ["daily_batch"],
+  dependencies: ["ulb_fraud_detection_predictions"]
+}
+
+-- SOP-MLOPS-2026-002 4.2: ML.GLOBAL_EXPLAIN (Tree SHAP)
+-- 要 ENABLE_GLOBAL_EXPLAIN = TRUE（initial_detection_model.sqlx）
+
+WITH shap AS (
+  SELECT
+    feature,
+    attribution,
+    ABS(attribution) AS abs_attribution,
+    RANK() OVER (ORDER BY ABS(attribution) DESC) AS rank_shap,
+    SAFE_DIVIDE(ABS(attribution), SUM(ABS(attribution)) OVER ()) AS shap_share
+  FROM
+    ML.GLOBAL_EXPLAIN(
+      MODEL `${dataform.projectConfig.defaultDatabase}.${dataform.projectConfig.defaultSchema}.ulb_fraud_detection_model`,
+      STRUCT(TRUE AS class_level_explain)
+    )
+  WHERE
+    CAST(`class` AS STRING) IN ("1", "true", "True")
+)
+
+SELECT
+  CURRENT_DATE("Asia/Tokyo") AS evaluation_date,
+  CURRENT_TIMESTAMP() AS evaluated_at,
+  feature,
+  attribution,
+  abs_attribution,
+  rank_shap,
+  shap_share,
+  feature IN ("V14", "V17", "V12") AS is_audit_variable,
+  (feature IN ("V14", "V17", "V12") AND rank_shap <= 5) AS audit_in_top5
+FROM
+  shap

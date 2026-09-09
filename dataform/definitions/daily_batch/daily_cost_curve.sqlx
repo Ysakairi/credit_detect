@@ -1,0 +1,61 @@
+config {
+  type: "table",
+  schema: "dwh_prod",
+  name: "ulb_fraud_detection_cost_curve",
+  description: "Cost-sensitive expected loss by decision threshold for Looker Studio",
+  tags: ["daily_batch"]
+}
+
+-- SOP-MLOPS-2026-002 5.3: 閾値ごとの期待損失（Looker の折れ線用）
+
+WITH pred AS (
+  SELECT
+    CAST(Class AS INT64) AS class_label,
+    CAST(Amount AS FLOAT64) AS amount,
+    fraud_probability
+  FROM
+    ${ref("ulb_fraud_detection_predictions")}
+  WHERE
+    fraud_probability IS NOT NULL
+),
+
+thresholds AS (
+  SELECT
+    threshold
+  FROM
+    UNNEST(GENERATE_ARRAY(0.01, 0.99, 0.01)) AS threshold
+),
+
+cost_by_threshold AS (
+  SELECT
+    th.threshold,
+    SUM(IF(p.fraud_probability < th.threshold AND p.class_label = 1, p.amount + 15.0, 0)) AS fn_loss,
+    COUNTIF(p.fraud_probability >= th.threshold AND p.class_label = 0) * 5.0 AS fp_loss,
+    COUNTIF(p.fraud_probability >= th.threshold AND p.class_label = 1) * 0.1 AS tp_cost,
+    COUNTIF(p.fraud_probability >= th.threshold AND p.class_label = 1) AS tp_count,
+    COUNTIF(p.fraud_probability < th.threshold AND p.class_label = 1) AS fn_count,
+    COUNTIF(p.fraud_probability >= th.threshold AND p.class_label = 0) AS fp_count,
+    COUNTIF(p.fraud_probability < th.threshold AND p.class_label = 0) AS tn_count
+  FROM
+    pred AS p
+  CROSS JOIN
+    thresholds AS th
+  GROUP BY
+    th.threshold
+)
+
+SELECT
+  CURRENT_DATE("Asia/Tokyo") AS evaluation_date,
+  CURRENT_TIMESTAMP() AS evaluated_at,
+  threshold,
+  fn_loss,
+  fp_loss,
+  tp_cost,
+  fn_loss + fp_loss + tp_cost AS expected_loss,
+  tp_count,
+  fn_count,
+  fp_count,
+  tn_count,
+  (fn_loss + fp_loss + tp_cost) = MIN(fn_loss + fp_loss + tp_cost) OVER () AS is_optimal_threshold
+FROM
+  cost_by_threshold

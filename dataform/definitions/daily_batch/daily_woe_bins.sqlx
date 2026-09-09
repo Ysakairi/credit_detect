@@ -1,0 +1,99 @@
+config {
+  type: "table",
+  schema: "dwh_prod",
+  name: "ulb_fraud_detection_woe_bins",
+  description: "Per-feature 10-bin WoE distribution for Looker Studio WoE plots",
+  tags: ["daily_batch"]
+}
+
+-- SOP-MLOPS-2026-002 3.2: ビンごとの WoE（等頻度 10 ビン）
+
+WITH typed AS (
+  SELECT
+    CAST(Class AS INT64) AS class_label,
+    ${require("includes/features").FEATURE_CAST_SELECT}
+  FROM
+    ${ref("ulb_fraud_detection_daily_converted")}
+),
+
+unpivoted AS (
+  SELECT
+    class_label,
+    feature_name,
+    feature_value
+  FROM
+    typed
+  UNPIVOT (feature_value FOR feature_name IN (${require("includes/features").FEATURE_UNPIVOT_LIST}))
+  WHERE
+    feature_value IS NOT NULL
+),
+
+binned AS (
+  SELECT
+    feature_name,
+    class_label,
+    feature_value,
+    NTILE(10) OVER (PARTITION BY feature_name ORDER BY feature_value) AS bin_id
+  FROM
+    unpivoted
+),
+
+bin_stats AS (
+  SELECT
+    feature_name,
+    bin_id,
+    COUNT(*) AS n_rows,
+    COUNTIF(class_label = 1) AS n_pos,
+    COUNTIF(class_label = 0) AS n_neg,
+    MIN(feature_value) AS bin_min,
+    MAX(feature_value) AS bin_max
+  FROM
+    binned
+  GROUP BY
+    feature_name,
+    bin_id
+),
+
+bin_totals AS (
+  SELECT
+    feature_name,
+    SUM(n_pos) AS total_pos,
+    SUM(n_neg) AS total_neg
+  FROM
+    bin_stats
+  GROUP BY
+    feature_name
+)
+
+SELECT
+  CURRENT_DATE("Asia/Tokyo") AS evaluation_date,
+  CURRENT_TIMESTAMP() AS evaluated_at,
+  s.feature_name AS feature,
+  s.bin_id,
+  s.bin_min,
+  s.bin_max,
+  s.n_rows,
+  s.n_pos,
+  s.n_neg,
+  (s.n_pos + 0.5) / (t.total_pos + 5.0) AS dist_pos,
+  (s.n_neg + 0.5) / (t.total_neg + 5.0) AS dist_neg,
+  SAFE.LN(
+    ((s.n_pos + 0.5) / (t.total_pos + 5.0))
+    / ((s.n_neg + 0.5) / (t.total_neg + 5.0))
+  ) AS woe,
+  (
+    ((s.n_pos + 0.5) / (t.total_pos + 5.0))
+    - ((s.n_neg + 0.5) / (t.total_neg + 5.0))
+  ) * SAFE.LN(
+    ((s.n_pos + 0.5) / (t.total_pos + 5.0))
+    / ((s.n_neg + 0.5) / (t.total_neg + 5.0))
+  ) AS iv_contribution
+FROM
+  bin_stats AS s
+INNER JOIN
+  bin_totals AS t
+ON
+  s.feature_name = t.feature_name
+WHERE
+  t.total_pos > 0
+  AND t.total_neg > 0

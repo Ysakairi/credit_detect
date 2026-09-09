@@ -1,0 +1,213 @@
+config {
+  type: "table",
+  schema: "dwh_prod",
+  name: "ulb_fraud_detection_feature_separation",
+  description: "Per-feature KS, IV, Cliff's Delta, and Z-score difference with SOP-MLOPS-2026-002 ratings",
+  tags: ["daily_batch"],
+  dependencies: ["ulb_fraud_detection_daily_converted"]
+}
+
+-- SOP-MLOPS-2026-002 第3章: 陽性・陰性集団の統計的乖離評価
+-- Looker Studio: 特徴量ごとの棒グラフ / スコアカード向けワイドテーブル
+
+WITH typed AS (
+  SELECT
+    CAST(Class AS INT64) AS class_label,
+    ${require("includes/features").FEATURE_CAST_SELECT}
+  FROM
+    ${ref("ulb_fraud_detection_daily_converted")}
+),
+
+unpivoted AS (
+  SELECT
+    class_label,
+    feature_name,
+    feature_value
+  FROM
+    typed
+  UNPIVOT (feature_value FOR feature_name IN (${require("includes/features").FEATURE_UNPIVOT_LIST}))
+  WHERE
+    feature_value IS NOT NULL
+),
+
+value_counts AS (
+  SELECT
+    feature_name,
+    feature_value,
+    COUNTIF(class_label = 1) AS n_pos,
+    COUNTIF(class_label = 0) AS n_neg
+  FROM
+    unpivoted
+  GROUP BY
+    feature_name,
+    feature_value
+),
+
+cdf AS (
+  SELECT
+    feature_name,
+    feature_value,
+    n_pos,
+    n_neg,
+    SUM(n_pos) OVER (PARTITION BY feature_name) AS total_pos,
+    SUM(n_neg) OVER (PARTITION BY feature_name) AS total_neg,
+    SUM(n_pos) OVER (PARTITION BY feature_name ORDER BY feature_value) AS cum_pos,
+    SUM(n_neg) OVER (PARTITION BY feature_name ORDER BY feature_value) AS cum_neg
+  FROM
+    value_counts
+),
+
+ks AS (
+  SELECT
+    feature_name,
+    MAX(ABS(SAFE_DIVIDE(cum_pos, total_pos) - SAFE_DIVIDE(cum_neg, total_neg))) AS ks_statistic
+  FROM
+    cdf
+  WHERE
+    total_pos > 0
+    AND total_neg > 0
+  GROUP BY
+    feature_name
+),
+
+cliffs AS (
+  SELECT
+    feature_name,
+    SAFE_DIVIDE(
+      SUM(n_pos * (cum_neg - n_neg)) - SUM(n_pos * (total_neg - cum_neg)),
+      total_pos * total_neg
+    ) AS cliffs_delta
+  FROM
+    cdf
+  WHERE
+    total_pos > 0
+    AND total_neg > 0
+  GROUP BY
+    feature_name,
+    total_pos,
+    total_neg
+),
+
+zscore AS (
+  SELECT
+    feature_name,
+    AVG(IF(class_label = 1, feature_value, NULL)) AS mean_pos,
+    AVG(IF(class_label = 0, feature_value, NULL)) AS mean_neg,
+    STDDEV_POP(IF(class_label = 0, feature_value, NULL)) AS std_neg,
+    SAFE_DIVIDE(
+      AVG(IF(class_label = 1, feature_value, NULL)) - AVG(IF(class_label = 0, feature_value, NULL)),
+      STDDEV_POP(IF(class_label = 0, feature_value, NULL)) + 1e-9
+    ) AS z_score_diff
+  FROM
+    unpivoted
+  GROUP BY
+    feature_name
+),
+
+binned AS (
+  SELECT
+    feature_name,
+    class_label,
+    NTILE(10) OVER (PARTITION BY feature_name ORDER BY feature_value) AS bin_id
+  FROM
+    unpivoted
+),
+
+bin_stats AS (
+  SELECT
+    feature_name,
+    bin_id,
+    COUNTIF(class_label = 1) AS n_pos,
+    COUNTIF(class_label = 0) AS n_neg
+  FROM
+    binned
+  GROUP BY
+    feature_name,
+    bin_id
+),
+
+bin_totals AS (
+  SELECT
+    feature_name,
+    SUM(n_pos) AS total_pos,
+    SUM(n_neg) AS total_neg
+  FROM
+    bin_stats
+  GROUP BY
+    feature_name
+),
+
+iv AS (
+  SELECT
+    s.feature_name,
+    SUM(
+      (dist_pos - dist_neg) * SAFE.LN(dist_pos / dist_neg)
+    ) AS information_value
+  FROM (
+    SELECT
+      s.feature_name,
+      -- Laplace smoothing (0.5) to keep WoE defined on empty class bins
+      (s.n_pos + 0.5) / (t.total_pos + 5.0) AS dist_pos,
+      (s.n_neg + 0.5) / (t.total_neg + 5.0) AS dist_neg
+    FROM
+      bin_stats AS s
+    INNER JOIN
+      bin_totals AS t
+    ON
+      s.feature_name = t.feature_name
+    WHERE
+      t.total_pos > 0
+      AND t.total_neg > 0
+  ) AS s
+  GROUP BY
+    s.feature_name
+)
+
+SELECT
+  CURRENT_DATE("Asia/Tokyo") AS evaluation_date,
+  CURRENT_TIMESTAMP() AS evaluated_at,
+  k.feature_name AS feature,
+  k.ks_statistic,
+  CASE
+    WHEN k.ks_statistic >= 0.50 THEN "卓越"
+    WHEN k.ks_statistic >= 0.40 THEN "優秀"
+    WHEN k.ks_statistic >= 0.20 THEN "許容"
+    ELSE "分離能不足"
+  END AS ks_rating,
+  i.information_value,
+  CASE
+    WHEN i.information_value >= 0.50 THEN "過学習疑い"
+    WHEN i.information_value >= 0.30 THEN "強い予測力"
+    WHEN i.information_value >= 0.10 THEN "中程度"
+    WHEN i.information_value >= 0.02 THEN "弱い予測力"
+    ELSE "無効変数"
+  END AS iv_rating,
+  c.cliffs_delta,
+  ABS(c.cliffs_delta) AS cliffs_delta_abs,
+  CASE
+    WHEN ABS(c.cliffs_delta) >= 0.474 THEN "Large"
+    WHEN ABS(c.cliffs_delta) >= 0.330 THEN "Medium"
+    WHEN ABS(c.cliffs_delta) >= 0.147 THEN "Small"
+    ELSE "Negligible"
+  END AS cliffs_rating,
+  z.z_score_diff,
+  ABS(z.z_score_diff) AS z_score_diff_abs,
+  CASE
+    WHEN ABS(z.z_score_diff) >= 3.0 THEN "有意 (参考)"
+    ELSE "参考値未満"
+  END AS z_rating,
+  (k.ks_statistic >= 0.40 AND ABS(c.cliffs_delta) >= 0.33) AS is_strong_separator
+FROM
+  ks AS k
+LEFT JOIN
+  iv AS i
+ON
+  k.feature_name = i.feature_name
+LEFT JOIN
+  cliffs AS c
+ON
+  k.feature_name = c.feature_name
+LEFT JOIN
+  zscore AS z
+ON
+  k.feature_name = z.feature_name

@@ -1,0 +1,130 @@
+config {
+  type: "table",
+  schema: "dwh_prod",
+  name: "ulb_fraud_detection_feature_matrix",
+  description: "Looker Studio long-format feature evaluation matrix (SOP-MLOPS-2026-002 categories 1-2)",
+  tags: ["daily_batch"]
+}
+
+-- 特徴量×メトリクスのロング形式。Looker Studio で metric_name をフィルタして利用する。
+
+SELECT
+  evaluation_date,
+  evaluated_at,
+  feature,
+  1 AS category_id,
+  "① 分布乖離・判別力" AS category_name,
+  "ks_statistic" AS metric_name,
+  "KS統計量" AS metric_label,
+  ks_statistic AS metric_value,
+  ks_rating AS rating,
+  CAST(NULL AS INT64) AS rank_value,
+  ks_rating = "分離能不足" AS is_flagged
+FROM
+  ${ref("ulb_fraud_detection_feature_separation")}
+
+UNION ALL
+
+SELECT
+  evaluation_date,
+  evaluated_at,
+  feature,
+  1,
+  "① 分布乖離・判別力",
+  "information_value",
+  "IV (Information Value)",
+  information_value,
+  iv_rating,
+  CAST(NULL AS INT64),
+  iv_rating IN ("無効変数", "過学習疑い")
+FROM
+  ${ref("ulb_fraud_detection_feature_separation")}
+
+UNION ALL
+
+SELECT
+  evaluation_date,
+  evaluated_at,
+  feature,
+  1,
+  "① 分布乖離・判別力",
+  "cliffs_delta",
+  "Cliff's Delta (|δ|)",
+  cliffs_delta_abs,
+  cliffs_rating,
+  CAST(NULL AS INT64),
+  cliffs_rating = "Negligible"
+FROM
+  ${ref("ulb_fraud_detection_feature_separation")}
+
+UNION ALL
+
+SELECT
+  evaluation_date,
+  evaluated_at,
+  feature,
+  1,
+  "① 分布乖離・判別力",
+  "z_score_diff",
+  "Zスコア差 (|ΔZ|)",
+  z_score_diff_abs,
+  z_rating,
+  CAST(NULL AS INT64),
+  FALSE
+FROM
+  ${ref("ulb_fraud_detection_feature_separation")}
+
+UNION ALL
+
+SELECT
+  evaluation_date,
+  evaluated_at,
+  feature,
+  2,
+  "② BQML 固有説明性",
+  "importance_gain",
+  "ML.FEATURE_IMPORTANCE (Gain)",
+  importance_gain,
+  IF(cover_overfit_flag, "過学習疑い", "記録"),
+  rank_gain,
+  FALSE
+FROM
+  ${ref("ulb_fraud_detection_feature_importance")}
+
+UNION ALL
+
+SELECT
+  evaluation_date,
+  evaluated_at,
+  feature,
+  2,
+  "② BQML 固有説明性",
+  "importance_cover",
+  "ML.FEATURE_IMPORTANCE (Cover)",
+  importance_cover,
+  IF(cover_overfit_flag, "過学習疑い", "記録"),
+  rank_cover,
+  cover_overfit_flag
+FROM
+  ${ref("ulb_fraud_detection_feature_importance")}
+
+UNION ALL
+
+SELECT
+  evaluation_date,
+  evaluated_at,
+  feature,
+  2,
+  "② BQML 固有説明性",
+  "mean_abs_shap",
+  "ML.GLOBAL_EXPLAIN (Tree SHAP)",
+  abs_attribution,
+  CASE
+    WHEN is_audit_variable AND rank_shap <= 5 THEN "監査OK"
+    WHEN is_audit_variable AND rank_shap > 5 THEN "監査要確認"
+    ELSE "記録"
+  END,
+  rank_shap,
+  is_audit_variable AND rank_shap > 5
+FROM
+  ${ref("ulb_fraud_detection_global_explain")}

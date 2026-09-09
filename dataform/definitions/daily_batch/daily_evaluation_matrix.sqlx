@@ -1,0 +1,314 @@
+config {
+  type: "table",
+  schema: "dwh_prod",
+  name: "ulb_fraud_detection_evaluation_matrix",
+  description: "Looker Studio model-level evaluation scorecard (SOP-MLOPS-2026-002)",
+  tags: ["daily_batch"]
+}
+
+-- モデル単位メトリクスのロング形式。Looker Studio のスコアカード・時系列の主テーブル。
+
+WITH evaluate AS (
+  SELECT
+    *
+  FROM
+    ${ref("ulb_fraud_detection_evaluation")}
+),
+
+imbalance AS (
+  SELECT
+    *
+  FROM
+    ${ref("ulb_fraud_detection_imbalance_metrics")}
+),
+
+psi AS (
+  SELECT
+    evaluation_date,
+    evaluated_at,
+    ANY_VALUE(psi) AS psi,
+    ANY_VALUE(psi_rating) AS psi_rating
+  FROM
+    ${ref("ulb_fraud_detection_psi")}
+  GROUP BY
+    evaluation_date,
+    evaluated_at
+),
+
+importance AS (
+  SELECT
+    evaluation_date,
+    evaluated_at,
+    ANY_VALUE(top5_gain_share) AS top5_gain_share,
+    ANY_VALUE(top5_gain_concentrated) AS top5_gain_concentrated
+  FROM
+    ${ref("ulb_fraud_detection_feature_importance")}
+  GROUP BY
+    evaluation_date,
+    evaluated_at
+),
+
+shap_audit AS (
+  SELECT
+    evaluation_date,
+    evaluated_at,
+    COUNTIF(is_audit_variable AND rank_shap <= 5) AS audit_vars_in_top5,
+    COUNTIF(is_audit_variable) AS audit_vars_present
+  FROM
+    ${ref("ulb_fraud_detection_global_explain")}
+  GROUP BY
+    evaluation_date,
+    evaluated_at
+),
+
+local_consistency AS (
+  SELECT
+    evaluation_date,
+    evaluated_at,
+    SAFE_DIVIDE(COUNTIF(direction_consistent), COUNT(*)) AS local_shap_consistency
+  FROM
+    ${ref("ulb_fraud_detection_local_explain")}
+  GROUP BY
+    evaluation_date,
+    evaluated_at
+)
+
+SELECT
+  i.evaluation_date,
+  i.evaluated_at,
+  3 AS category_id,
+  "③ 予測性能・不均衡適応" AS category_name,
+  "pr_auc" AS metric_name,
+  "PR-AUC" AS metric_label,
+  i.pr_auc AS metric_value,
+  0.80 AS threshold_pass,
+  CAST(NULL AS FLOAT64) AS threshold_warn,
+  i.pr_auc_rating AS rating,
+  i.pr_auc_rating = "PASS" AS is_pass,
+  1 AS sort_order
+FROM
+  imbalance AS i
+
+UNION ALL
+
+SELECT
+  i.evaluation_date,
+  i.evaluated_at,
+  3,
+  "③ 予測性能・不均衡適応",
+  "capture_rate_0_1pct",
+  "Top-0.1% Capture Rate",
+  i.capture_rate_0_1pct,
+  0.75,
+  CAST(NULL AS FLOAT64),
+  i.capture_0_1_rating,
+  i.capture_0_1_rating = "PASS",
+  2
+FROM
+  imbalance AS i
+
+UNION ALL
+
+SELECT
+  i.evaluation_date,
+  i.evaluated_at,
+  3,
+  "③ 予測性能・不均衡適応",
+  "capture_rate_0_5pct",
+  "Top-0.5% Capture Rate",
+  i.capture_rate_0_5pct,
+  0.90,
+  CAST(NULL AS FLOAT64),
+  i.capture_0_5_rating,
+  i.capture_0_5_rating = "PASS",
+  3
+FROM
+  imbalance AS i
+
+UNION ALL
+
+SELECT
+  i.evaluation_date,
+  i.evaluated_at,
+  3,
+  "③ 予測性能・不均衡適応",
+  "cost_sensitive_expected_loss",
+  "Cost-Sensitive Expected Loss",
+  i.min_expected_loss,
+  CAST(NULL AS FLOAT64),
+  CAST(NULL AS FLOAT64),
+  "最小化済み",
+  TRUE,
+  4
+FROM
+  imbalance AS i
+
+UNION ALL
+
+SELECT
+  i.evaluation_date,
+  i.evaluated_at,
+  3,
+  "③ 予測性能・不均衡適応",
+  "optimal_threshold",
+  "最適閾値 P*",
+  i.optimal_threshold,
+  CAST(NULL AS FLOAT64),
+  CAST(NULL AS FLOAT64),
+  "記録",
+  TRUE,
+  5
+FROM
+  imbalance AS i
+
+UNION ALL
+
+SELECT
+  p.evaluation_date,
+  p.evaluated_at,
+  4,
+  "④ 安定性・経時変化",
+  "psi",
+  "PSI (Population Stability Index)",
+  p.psi,
+  0.10,
+  0.25,
+  p.psi_rating,
+  p.psi_rating = "Green",
+  6
+FROM
+  psi AS p
+
+UNION ALL
+
+SELECT
+  g.evaluation_date,
+  g.evaluated_at,
+  2,
+  "② BQML 固有説明性",
+  "top5_gain_share",
+  "上位5変数 Gain 占有率",
+  g.top5_gain_share,
+  0.60,
+  CAST(NULL AS FLOAT64),
+  IF(g.top5_gain_concentrated, "PASS", "FAIL"),
+  g.top5_gain_concentrated,
+  7
+FROM
+  importance AS g
+
+UNION ALL
+
+SELECT
+  s.evaluation_date,
+  s.evaluated_at,
+  2,
+  "② BQML 固有説明性",
+  "audit_vars_in_shap_top5",
+  "監査変数の Tree SHAP 上位5入り件数",
+  CAST(s.audit_vars_in_top5 AS FLOAT64),
+  3.0,
+  CAST(NULL AS FLOAT64),
+  IF(s.audit_vars_in_top5 = s.audit_vars_present, "監査OK", "監査要確認"),
+  s.audit_vars_in_top5 = s.audit_vars_present,
+  8
+FROM
+  shap_audit AS s
+
+UNION ALL
+
+SELECT
+  l.evaluation_date,
+  l.evaluated_at,
+  2,
+  "② BQML 固有説明性",
+  "local_shap_direction_consistency",
+  "局所 SHAP 寄与方向の整合率",
+  l.local_shap_consistency,
+  0.80,
+  CAST(NULL AS FLOAT64),
+  IF(l.local_shap_consistency >= 0.80, "PASS", "要確認"),
+  l.local_shap_consistency >= 0.80,
+  9
+FROM
+  local_consistency AS l
+
+UNION ALL
+
+SELECT
+  i.evaluation_date,
+  i.evaluated_at,
+  3,
+  "③ 予測性能・不均衡適応",
+  "roc_auc",
+  "ROC-AUC (参考値)",
+  e.roc_auc,
+  CAST(NULL AS FLOAT64),
+  CAST(NULL AS FLOAT64),
+  "参考値",
+  TRUE,
+  10
+FROM
+  imbalance AS i
+CROSS JOIN
+  evaluate AS e
+
+UNION ALL
+
+SELECT
+  i.evaluation_date,
+  i.evaluated_at,
+  3,
+  "③ 予測性能・不均衡適応",
+  "precision",
+  "Precision (参考値)",
+  e.precision,
+  CAST(NULL AS FLOAT64),
+  CAST(NULL AS FLOAT64),
+  "参考値",
+  TRUE,
+  11
+FROM
+  imbalance AS i
+CROSS JOIN
+  evaluate AS e
+
+UNION ALL
+
+SELECT
+  i.evaluation_date,
+  i.evaluated_at,
+  3,
+  "③ 予測性能・不均衡適応",
+  "recall",
+  "Recall (参考値)",
+  e.recall,
+  CAST(NULL AS FLOAT64),
+  CAST(NULL AS FLOAT64),
+  "参考値",
+  TRUE,
+  12
+FROM
+  imbalance AS i
+CROSS JOIN
+  evaluate AS e
+
+UNION ALL
+
+SELECT
+  i.evaluation_date,
+  i.evaluated_at,
+  3,
+  "③ 予測性能・不均衡適応",
+  "f1_score",
+  "F1スコア (参考値)",
+  e.f1_score,
+  CAST(NULL AS FLOAT64),
+  CAST(NULL AS FLOAT64),
+  "参考値",
+  TRUE,
+  13
+FROM
+  imbalance AS i
+CROSS JOIN
+  evaluate AS e
