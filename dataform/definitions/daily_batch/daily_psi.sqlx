@@ -8,6 +8,9 @@ config {
 
 -- SOP-MLOPS-2026-002 第6章: PSI（10 均等幅ビン, スコア [0, 1]）
 -- 学習テーブルは daily_batch の ref に含めず再構築を避ける
+-- （Workflows が transitiveDependenciesIncluded のため、ref すると毎回 train が走る）。
+-- ベースラインは学習スコアの ML.PREDICT。公開データは静的なので日次で安定する。
+-- 空ビン 0.0001 は ln(0) 回避。IAM は Dataform SA（jobUser + dataEditor）。
 
 WITH train_pred AS (
   SELECT
