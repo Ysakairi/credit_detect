@@ -1,0 +1,57 @@
+config {
+  type: "table",
+  schema: "dwh_prod",
+  name: "ulb_fraud_detection_feature_importance",
+  description: "BQML Gain/Cover/Weight with SOP concentration and overfit flags",
+  tags: ["daily_batch"],
+  dependencies: ["ulb_fraud_detection_predictions"]
+}
+
+-- SOP-MLOPS-2026-002 4.1: ML.FEATURE_IMPORTANCE (Gain, Cover, Weight)
+
+WITH raw AS (
+  SELECT
+    feature,
+    importance_gain,
+    importance_cover,
+    importance_weight,
+    RANK() OVER (ORDER BY importance_gain DESC) AS rank_gain,
+    RANK() OVER (ORDER BY importance_cover DESC) AS rank_cover,
+    RANK() OVER (ORDER BY importance_weight DESC) AS rank_weight,
+    SAFE_DIVIDE(importance_gain, SUM(importance_gain) OVER ()) AS gain_share,
+    SAFE_DIVIDE(importance_cover, SUM(importance_cover) OVER ()) AS cover_share,
+    SAFE_DIVIDE(importance_weight, SUM(importance_weight) OVER ()) AS weight_share
+  FROM
+    ML.FEATURE_IMPORTANCE(
+      MODEL `${dataform.projectConfig.defaultDatabase}.${dataform.projectConfig.defaultSchema}.ulb_fraud_detection_model`
+    )
+),
+
+concentration AS (
+  SELECT
+    SUM(IF(rank_gain <= 5, gain_share, 0)) AS top5_gain_share
+  FROM
+    raw
+)
+
+SELECT
+  CURRENT_DATE("Asia/Tokyo") AS evaluation_date,
+  CURRENT_TIMESTAMP() AS evaluated_at,
+  r.feature,
+  r.importance_gain,
+  r.importance_cover,
+  r.importance_weight,
+  r.rank_gain,
+  r.rank_cover,
+  r.rank_weight,
+  r.gain_share,
+  r.cover_share,
+  r.weight_share,
+  c.top5_gain_share,
+  c.top5_gain_share >= 0.60 AS top5_gain_concentrated,
+  -- Cover が極端に低く Gain が高い変数は過学習分岐の疑い
+  (r.cover_share < 0.005 AND r.gain_share > 0.05) AS cover_overfit_flag
+FROM
+  raw AS r
+CROSS JOIN
+  concentration AS c

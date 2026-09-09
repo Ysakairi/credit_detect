@@ -1,0 +1,187 @@
+config {
+  type: "table",
+  schema: "dwh_prod",
+  name: "ulb_fraud_detection_imbalance_metrics",
+  description: "PR-AUC, Top-K capture rate, and cost-sensitive expected loss with SOP ratings",
+  tags: ["daily_batch"]
+}
+
+-- SOP-MLOPS-2026-002 第5章: 不均衡データ特有の予測性能とビジネス損失
+-- C_FN = Amount + 15 (チャージバック), C_FP = 5, C_TP = 0.1
+
+WITH pred AS (
+  SELECT
+    CAST(Class AS INT64) AS class_label,
+    CAST(Amount AS FLOAT64) AS amount,
+    fraud_probability
+  FROM
+    ${ref("ulb_fraud_detection_predictions")}
+  WHERE
+    fraud_probability IS NOT NULL
+),
+
+counts AS (
+  SELECT
+    COUNT(*) AS n_rows,
+    COUNTIF(class_label = 1) AS n_pos,
+    COUNTIF(class_label = 0) AS n_neg
+  FROM
+    pred
+),
+
+-- Average Precision (PR-AUC): 陽性サンプルでの precision の再現率増分加重平均
+ranked AS (
+  SELECT
+    class_label,
+    SUM(IF(class_label = 1, 1, 0)) OVER (
+      ORDER BY fraud_probability DESC, amount, class_label
+      ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+    ) AS tp_cum,
+    SUM(IF(class_label = 0, 1, 0)) OVER (
+      ORDER BY fraud_probability DESC, amount, class_label
+      ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+    ) AS fp_cum,
+    SUM(IF(class_label = 1, 1, 0)) OVER () AS total_pos
+  FROM
+    pred
+),
+
+pr_auc AS (
+  SELECT
+    SUM(
+      IF(
+        class_label = 1 AND total_pos > 0,
+        SAFE_DIVIDE(tp_cum, tp_cum + fp_cum) * (1.0 / total_pos),
+        0
+      )
+    ) AS pr_auc
+  FROM
+    ranked
+),
+
+topk AS (
+  SELECT
+    n_rows,
+    n_pos,
+    GREATEST(CAST(CEIL(n_rows * 0.001) AS INT64), 1) AS k_0_1,
+    GREATEST(CAST(CEIL(n_rows * 0.005) AS INT64), 1) AS k_0_5
+  FROM
+    counts
+),
+
+ranked_rows AS (
+  SELECT
+    class_label,
+    ROW_NUMBER() OVER (ORDER BY fraud_probability DESC, amount) AS rnk
+  FROM
+    pred
+),
+
+capture AS (
+  SELECT
+    SAFE_DIVIDE(
+      COUNTIF(r.class_label = 1 AND r.rnk <= t.k_0_1),
+      t.n_pos
+    ) AS capture_rate_0_1pct,
+    SAFE_DIVIDE(
+      COUNTIF(r.class_label = 1 AND r.rnk <= t.k_0_5),
+      t.n_pos
+    ) AS capture_rate_0_5pct,
+    t.k_0_1,
+    t.k_0_5
+  FROM
+    ranked_rows AS r
+  CROSS JOIN
+    topk AS t
+  GROUP BY
+    t.n_pos,
+    t.k_0_1,
+    t.k_0_5
+),
+
+thresholds AS (
+  SELECT
+    threshold
+  FROM
+    UNNEST(GENERATE_ARRAY(0.01, 0.99, 0.01)) AS threshold
+),
+
+cost_by_threshold AS (
+  SELECT
+    th.threshold,
+    SUM(IF(p.fraud_probability < th.threshold AND p.class_label = 1, p.amount + 15.0, 0)) AS fn_loss,
+    COUNTIF(p.fraud_probability >= th.threshold AND p.class_label = 0) * 5.0 AS fp_loss,
+    COUNTIF(p.fraud_probability >= th.threshold AND p.class_label = 1) * 0.1 AS tp_cost
+  FROM
+    pred AS p
+  CROSS JOIN
+    thresholds AS th
+  GROUP BY
+    th.threshold
+),
+
+cost_total AS (
+  SELECT
+    threshold,
+    fn_loss,
+    fp_loss,
+    tp_cost,
+    fn_loss + fp_loss + tp_cost AS expected_loss
+  FROM
+    cost_by_threshold
+),
+
+cost_opt AS (
+  SELECT
+    threshold AS optimal_threshold,
+    expected_loss AS min_expected_loss,
+    fn_loss,
+    fp_loss,
+    tp_cost
+  FROM
+    cost_total
+  ORDER BY
+    expected_loss ASC,
+    threshold ASC
+  LIMIT 1
+)
+
+SELECT
+  CURRENT_DATE("Asia/Tokyo") AS evaluation_date,
+  CURRENT_TIMESTAMP() AS evaluated_at,
+  c.n_rows,
+  c.n_pos,
+  c.n_neg,
+  p.pr_auc,
+  CASE
+    WHEN c.n_pos = 0 THEN "データ不足"
+    WHEN p.pr_auc >= 0.80 THEN "PASS"
+    ELSE "FAIL"
+  END AS pr_auc_rating,
+  cap.capture_rate_0_1pct,
+  cap.capture_rate_0_5pct,
+  cap.k_0_1,
+  cap.k_0_5,
+  CASE
+    WHEN c.n_pos = 0 THEN "データ不足"
+    WHEN cap.capture_rate_0_1pct >= 0.75 THEN "PASS"
+    ELSE "FAIL"
+  END AS capture_0_1_rating,
+  CASE
+    WHEN c.n_pos = 0 THEN "データ不足"
+    WHEN cap.capture_rate_0_5pct >= 0.90 THEN "PASS"
+    ELSE "FAIL"
+  END AS capture_0_5_rating,
+  o.optimal_threshold,
+  o.min_expected_loss,
+  o.fn_loss AS fn_loss_at_opt,
+  o.fp_loss AS fp_loss_at_opt,
+  o.tp_cost AS tp_cost_at_opt
+FROM
+  counts AS c
+CROSS JOIN
+  pr_auc AS p
+CROSS JOIN
+  capture AS cap
+CROSS JOIN
+  cost_opt AS o

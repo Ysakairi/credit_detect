@@ -1,0 +1,103 @@
+config {
+  type: "table",
+  schema: "dwh_prod",
+  name: "ulb_fraud_detection_local_explain",
+  description: "Local SHAP attributions for high-risk transactions (Looker-friendly unnested)",
+  tags: ["daily_batch"]
+}
+
+-- SOP-MLOPS-2026-002 4.3: ML.EXPLAIN_PREDICT
+-- 不正確率 >= 0.85、または上位20件を説明対象とする
+-- ARRAY は Looker Studio で扱えないため UNNEST してフラット化する
+
+WITH high_risk AS (
+  SELECT
+    Time,
+    Amount,
+    V1,
+    fraud_probability,
+    predicted_Class,
+    CAST(Class AS INT64) AS class_label,
+    ROW_NUMBER() OVER (ORDER BY fraud_probability DESC) AS score_rank
+  FROM
+    ${ref("ulb_fraud_detection_predictions")}
+),
+
+target_keys AS (
+  SELECT
+    Time,
+    Amount,
+    V1,
+    fraud_probability,
+    predicted_Class,
+    class_label
+  FROM
+    high_risk
+  WHERE
+    fraud_probability >= 0.85
+    OR score_rank <= 20
+),
+
+explain_raw AS (
+  SELECT
+    *
+  FROM
+    ML.EXPLAIN_PREDICT(
+      MODEL `${dataform.projectConfig.defaultDatabase}.${dataform.projectConfig.defaultSchema}.ulb_fraud_detection_model`,
+      (
+        SELECT
+          c.*
+        FROM
+          ${ref("ulb_fraud_detection_daily_converted")} AS c
+        INNER JOIN
+          target_keys AS k
+        ON
+          c.Time = k.Time
+          AND c.Amount = k.Amount
+          AND c.V1 = k.V1
+      ),
+      STRUCT(5 AS top_k_features)
+    )
+),
+
+global_sign AS (
+  SELECT
+    feature,
+    SIGN(attribution) AS global_sign
+  FROM
+    ${ref("ulb_fraud_detection_global_explain")}
+)
+
+SELECT
+  CURRENT_DATE("Asia/Tokyo") AS evaluation_date,
+  CURRENT_TIMESTAMP() AS evaluated_at,
+  e.Time,
+  e.Amount,
+  e.Hour,
+  k.class_label,
+  k.predicted_Class,
+  k.fraud_probability,
+  attr.feature AS shap_feature,
+  attr.attribution AS shap_attribution,
+  attr_rank + 1 AS shap_rank,
+  g.global_sign,
+  SIGN(attr.attribution) AS local_sign,
+  (
+    g.global_sign IS NULL
+    OR SIGN(attr.attribution) = g.global_sign
+    OR attr.attribution = 0
+  ) AS direction_consistent
+FROM
+  explain_raw AS e
+INNER JOIN
+  target_keys AS k
+ON
+  e.Time = k.Time
+  AND e.Amount = k.Amount
+  AND e.V1 = k.V1
+CROSS JOIN
+  UNNEST(e.top_feature_attributions) AS attr WITH OFFSET AS attr_rank
+LEFT JOIN
+  global_sign AS g
+ON
+  attr.feature = g.feature

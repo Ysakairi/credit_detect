@@ -1,0 +1,150 @@
+config {
+  type: "table",
+  schema: "dwh_prod",
+  name: "ulb_fraud_detection_psi",
+  description: "Population Stability Index vs training score distribution with SOP traffic-light rating",
+  tags: ["daily_batch"]
+}
+
+-- SOP-MLOPS-2026-002 第6章: PSI（10 均等幅ビン, スコア [0, 1]）
+-- 学習テーブルは daily_batch の ref に含めず再構築を避ける
+
+WITH train_pred AS (
+  SELECT
+    (
+      SELECT
+        prob
+      FROM
+        UNNEST(predicted_Class_probs)
+      WHERE
+        CAST(label AS STRING) = "1"
+      LIMIT 1
+    ) AS fraud_probability
+  FROM
+    ML.PREDICT(
+      MODEL `${dataform.projectConfig.defaultDatabase}.${dataform.projectConfig.defaultSchema}.ulb_fraud_detection_model`,
+      (
+        SELECT
+          *
+        FROM
+          `${dataform.projectConfig.defaultDatabase}.${dataform.projectConfig.defaultSchema}.ulb_fraud_detection_train`
+      )
+    )
+),
+
+daily_pred AS (
+  SELECT
+    fraud_probability
+  FROM
+    ${ref("ulb_fraud_detection_predictions")}
+  WHERE
+    fraud_probability IS NOT NULL
+),
+
+bins AS (
+  SELECT
+    bin_id
+  FROM
+    UNNEST(GENERATE_ARRAY(0, 9)) AS bin_id
+),
+
+assign_bin AS (
+  SELECT
+    "baseline" AS source,
+    LEAST(CAST(FLOOR(fraud_probability * 10) AS INT64), 9) AS bin_id
+  FROM
+    train_pred
+  WHERE
+    fraud_probability IS NOT NULL
+
+  UNION ALL
+
+  SELECT
+    "daily" AS source,
+    LEAST(CAST(FLOOR(fraud_probability * 10) AS INT64), 9) AS bin_id
+  FROM
+    daily_pred
+),
+
+counts AS (
+  SELECT
+    source,
+    bin_id,
+    COUNT(*) AS n
+  FROM
+    assign_bin
+  GROUP BY
+    source,
+    bin_id
+),
+
+totals AS (
+  SELECT
+    source,
+    SUM(n) AS n_total
+  FROM
+    counts
+  GROUP BY
+    source
+),
+
+dist AS (
+  SELECT
+    b.bin_id,
+    SAFE_DIVIDE(COALESCE(cb.n, 0), tb.n_total) AS baseline_pct_raw,
+    SAFE_DIVIDE(COALESCE(cd.n, 0), td.n_total) AS daily_pct_raw
+  FROM
+    bins AS b
+  LEFT JOIN
+    counts AS cb
+  ON
+    b.bin_id = cb.bin_id
+    AND cb.source = "baseline"
+  LEFT JOIN
+    counts AS cd
+  ON
+    b.bin_id = cd.bin_id
+    AND cd.source = "daily"
+  CROSS JOIN
+    totals AS tb
+  CROSS JOIN
+    totals AS td
+  WHERE
+    tb.source = "baseline"
+    AND td.source = "daily"
+),
+
+smoothed AS (
+  SELECT
+    bin_id,
+    GREATEST(COALESCE(baseline_pct_raw, 0), 0.0001) AS baseline_pct,
+    GREATEST(COALESCE(daily_pct_raw, 0), 0.0001) AS daily_pct
+  FROM
+    dist
+),
+
+psi_bins AS (
+  SELECT
+    bin_id,
+    baseline_pct,
+    daily_pct,
+    (daily_pct - baseline_pct) * SAFE.LN(daily_pct / baseline_pct) AS psi_contribution
+  FROM
+    smoothed
+)
+
+SELECT
+  CURRENT_DATE("Asia/Tokyo") AS evaluation_date,
+  CURRENT_TIMESTAMP() AS evaluated_at,
+  bin_id,
+  baseline_pct,
+  daily_pct,
+  psi_contribution,
+  SUM(psi_contribution) OVER () AS psi,
+  CASE
+    WHEN SUM(psi_contribution) OVER () < 0.10 THEN "Green"
+    WHEN SUM(psi_contribution) OVER () < 0.25 THEN "Yellow"
+    ELSE "Red"
+  END AS psi_rating
+FROM
+  psi_bins

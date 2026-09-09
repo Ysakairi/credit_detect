@@ -32,7 +32,10 @@ OPTIONS(
   DATA_SPLIT_COL = "is_validation",
 
   EARLY_STOP = TRUE,
-  MAX_ITERATIONS = 50
+  MAX_ITERATIONS = 50,
+
+  -- Tree SHAP (ML.GLOBAL_EXPLAIN) を有効化。モデル再作成が必要。
+  ENABLE_GLOBAL_EXPLAIN = TRUE
 ) AS
 SELECT
   *,

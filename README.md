@@ -67,6 +67,34 @@
 - **適合率 (Precision):** 不正と予測したうち、実際に不正だった割合（誤報を防ぐ）。
 - **ROC曲線 / AUC**
 
+### **C. 追加評価指標 (SOP-MLOPS-2026-002)**
+
+算出定義・判定基準・Looker Studio 用テーブルは [EVALUATE.md](EVALUATE.md) を参照。
+
+**① 分布乖離・判別力 (Distribution Separation)**
+
+- KS統計量 (Kolmogorov-Smirnov)
+- IV (Information Value) / WoE
+- Cliff's Delta (δ)
+- 陽性・陰性 Zスコア差 (ΔZ)（参考値）
+
+**② BQML 固有説明性 (Model Explainability)**
+
+- `ML.FEATURE_IMPORTANCE` (Gain)
+- `ML.FEATURE_IMPORTANCE` (Cover)
+- `ML.GLOBAL_EXPLAIN` (Tree SHAP)
+- `ML.EXPLAIN_PREDICT` (Local SHAP)
+
+**③ 予測性能・不均衡適応 (Predictive Performance)**
+
+- PR-AUC (Precision-Recall AUC)
+- Top-K% Capture Rate (Recall)
+- Cost-Sensitive Expected Loss
+
+**④ 安定性・経時変化 (Model & Data Stability)**
+
+- PSI (Population Stability Index)
+
 # 5. インフラストラクチャとデプロイメント (IaC)
 
 実務レベルのクラウド設計を証明するため、コンソールからの手動作成を廃し、以下のリソースをすべて **Terraform** で定義します。
