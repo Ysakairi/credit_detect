@@ -1,40 +1,134 @@
+# Terraform templatefile injects project_id, region, and dataform_repo.
+# Workflows expressions are dollar-dollar-escaped so they survive templatefile.
+
 main:
   steps:
     - init:
         assign:
-         # Terraformの templatefile から値が注入される
           - project_id: "${project_id}"
           - region: "${region}"
-          - run_job_name: "daily-ingest-job"
-          - dataform_repo: "projects/${project_id}/locations/${region}/repositories/${dataform_repo}"
+          - dataform_parent: "projects/${project_id}/locations/${region}/repositories/${dataform_repo}"
+          - poll_interval_seconds: 10
+          - max_polls: 60
+          - poll_count: 0
 
-    # Step 1: Cloud Run Jobs の実行
+    # Step 1: Cloud Run Jobs を起動（v1 jobs.run は非同期）
     - run_ingestion_job:
         call: googleapis.run.v1.namespaces.jobs.run
         args:
-          name: ${"namespaces/" + project_id + "/jobs/" + run_job_name}
-        result: job_result
+          name: namespaces/${project_id}/jobs/daily-ingest-job
+          location: ${region}
+        result: job_execution
 
-    # Step 2: Dataform のコンパイル (mainブランチを指定)
+    - wait_for_job:
+        call: sys.sleep
+        args:
+          seconds: $${poll_interval_seconds}
+
+    - increment_job_poll:
+        assign:
+          - poll_count: $${poll_count + 1}
+
+    - get_job_status:
+        call: googleapis.run.v1.namespaces.executions.get
+        args:
+          name: $${job_execution.metadata.name}
+          location: ${region}
+        result: job_status
+
+    - check_job_status:
+        switch:
+          - condition: $${job_status.status.completionTime == null}
+            next: check_job_poll_limit
+          - condition: $${job_status.status.conditions[0].status == "True"}
+            next: reset_poll_for_compile
+        raise: $${"Cloud Run Job failed: " + default(job_status.status.conditions[0].message, "unknown error")}
+
+    - check_job_poll_limit:
+        switch:
+          - condition: $${poll_count >= max_polls}
+            raise: "Timed out waiting for Cloud Run Job to complete"
+        next: wait_for_job
+
+    # Step 2: Dataform コンパイル（create も非同期）
+    - reset_poll_for_compile:
+        assign:
+          - poll_count: 0
+
     - compile_dataform:
         call: googleapis.dataform.v1beta1.projects.locations.repositories.compilationResults.create
         args:
-          parent: ${dataform_repo}
+          parent: $${dataform_parent}
           body:
             gitCommitish: "main"
         result: compilation_result
 
-    # Step 3: Dataform の実行 (daily_batchタグのみ実行)
+    - wait_for_compilation:
+        call: sys.sleep
+        args:
+          seconds: $${poll_interval_seconds}
+
+    - increment_compile_poll:
+        assign:
+          - poll_count: $${poll_count + 1}
+
+    - get_compilation:
+        call: googleapis.dataform.v1beta1.projects.locations.repositories.compilationResults.get
+        args:
+          name: $${compilation_result.name}
+        result: compilation_status
+
+    - check_compilation:
+        switch:
+          - condition: $${compilation_status.state == "SUCCEEDED"}
+            next: reset_poll_for_invoke
+          - condition: $${compilation_status.state == "FAILED" or compilation_status.state == "CANCELLED"}
+            raise: $${"Dataform compilation failed: " + default(compilation_status.errorStatus.message, compilation_status.state)}
+          - condition: $${poll_count >= max_polls}
+            raise: "Timed out waiting for Dataform compilation"
+        next: wait_for_compilation
+
+    # Step 3: daily_batch タグのみ実行
+    - reset_poll_for_invoke:
+        assign:
+          - poll_count: 0
+
     - execute_dataform:
         call: googleapis.dataform.v1beta1.projects.locations.repositories.workflowInvocations.create
         args:
-          parent: ${dataform_repo}
+          parent: $${dataform_parent}
           body:
-            compilationResult: ${compilation_result.name}
+            compilationResult: $${compilation_status.name}
             invocationConfig:
               includedTags:
-                - "daily_batch" # ここでタグを絞る
+                - "daily_batch"
+              transitiveDependenciesIncluded: true
         result: invocation_result
 
+    - wait_for_invocation:
+        call: sys.sleep
+        args:
+          seconds: $${poll_interval_seconds}
+
+    - increment_invoke_poll:
+        assign:
+          - poll_count: $${poll_count + 1}
+
+    - get_invocation:
+        call: googleapis.dataform.v1beta1.projects.locations.repositories.workflowInvocations.get
+        args:
+          name: $${invocation_result.name}
+        result: invocation_status
+
+    - check_invocation:
+        switch:
+          - condition: $${invocation_status.state == "SUCCEEDED"}
+            next: return_result
+          - condition: $${invocation_status.state == "FAILED" or invocation_status.state == "CANCELLED"}
+            raise: $${"Dataform invocation failed: " + invocation_status.state}
+          - condition: $${poll_count >= max_polls}
+            raise: "Timed out waiting for Dataform invocation"
+        next: wait_for_invocation
+
     - return_result:
-        return: ${invocation_result}
+        return: $${invocation_status}

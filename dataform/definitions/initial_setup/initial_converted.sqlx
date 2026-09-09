@@ -2,25 +2,20 @@ config {
   type: "table",
   schema: "dwh_prod",
   name: "ulb_fraud_detection_converted",
-  description: "Get data from public datasets",
+  description: "Full public dataset with Hour and pseudo Date 1-50",
   tags: ["initial_setup"]
 }
 
 -- 初期設定(1) 公開データセットからデータを取得する
+-- Date の割り当ては batch_app/daily_insert.py と一致させること
 
 SELECT
-  -- 元データの全カラム(Time, V1~V28, Amount, Class)を取得
   *,
-  
-  -- 1. 経過秒数(Time)から24時間表記の時間帯(Hour)を抽出
-  -- 3600秒(1時間)で割り、24で剰余を取る
-  MOD(CAST(Time / 3600 AS INT64), 24) AS Hour,
-  
-  -- 2. Timeでソートした行番号を元に、1〜50の管理番号を付与
-  -- 1-31は疑似日付として活用。日次バッチの予測対象とする。32-50はモデル作成用、トレーニングデータとして活用する
-  -- ROW_NUMBER()は「1」から始まるため、(-1) して「0始まり」に調整してから50で割った余りを出し、
-  -- 最後に (+1) している。
-  MOD(ROW_NUMBER() OVER(ORDER BY Time) - 1, 50) + 1 AS Date
-
+  MOD(CAST(FLOOR(Time / 3600) AS INT64), 24) AS Hour,
+  -- ROW_NUMBER は 1 始まりのため -1 して 0 始まりにし、50 で割った余り + 1
+  -- Time の同値行で非決定的にならないよう Amount, V1 でタイブレークする
+  MOD(ROW_NUMBER() OVER (ORDER BY Time, Amount, V1) - 1, 50) + 1 AS Date
 FROM
-  `bigquery-public-data.ml_datasets.ulb_fraud_detection`;
+  `bigquery-public-data.ml_datasets.ulb_fraud_detection`
+WHERE
+  Time IS NOT NULL

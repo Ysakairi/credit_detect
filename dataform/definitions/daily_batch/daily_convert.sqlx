@@ -1,20 +1,20 @@
 config {
   type: "table",
   schema: "dwh_prod",
-  name: "ulb_fraud_detection_converted",
-  description: "Feature Engineering",
+  name: "ulb_fraud_detection_daily_converted",
+  description: "Feature engineering for the daily batch slice",
   tags: ["daily_batch"]
 }
 
--- 日次バッチ(2) Cloud Run Functionで作成した「ulb_fraud_detection_Batch」を成形する
+-- 日次バッチ(2) Cloud Run Jobs が作成した ulb_fraud_detection_Batch を成形する
+-- 初期セットアップの ulb_fraud_detection_converted とは別名にし、Dataform の
+-- アクション名衝突と学習データの上書きを防ぐ
 
 SELECT
-  -- 抽出元(Batchテーブル)の全カラム(Time, V1~V28, Amount, Class, Date等)を取得
   *,
-  
-  -- 経過秒数(Time)から24時間表記の時間帯(Hour)を抽出してカラム追加
-  -- 3600秒(1時間)で割り、24で剰余を取ることで0〜23のHourを生成
-  MOD(CAST(Time / 3600 AS INT64), 24) AS Hour
-  
+  -- Time は公開データ上 0 以上。FLOOR で正の値の切り捨てを明示する
+  MOD(CAST(FLOOR(Time / 3600) AS INT64), 24) AS Hour
 FROM
-  `${dataform.projectConfig.defaultDatabase}.${dataform.projectConfig.defaultSchema}.ulb_fraud_detection_Batch`;
+  ${ref("ulb_fraud_detection_Batch")}
+WHERE
+  Time IS NOT NULL

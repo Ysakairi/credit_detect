@@ -1,70 +1,106 @@
+import logging
 import os
-import pandas as pd
-import numpy as np
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
+
 from google.cloud import bigquery
 
-PROJECT_ID = os.environ.get("PROJECT_ID", "your-gcp-project-id")
-DESTINATION_TABLE = os.environ.get("DESTINATION_TABLE", "your_dataset.ulb_fraud_detection_Batch") # 投入先をBatchテーブルに変更
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
+logger = logging.getLogger("daily_insert")
 
-def run_ingestion():
-    """
-    公開データセットからデータを取得し、擬似日付(Date)を付与して
-    当日のデータのみを抽出し、バッチ用テーブルを上書き(TRUNCATE)する処理
-    """
-    client = bigquery.Client(project=PROJECT_ID)
+PROJECT_ID = os.environ.get("PROJECT_ID")
+DESTINATION_TABLE = os.environ.get("DESTINATION_TABLE")
+PSEUDO_DAY_COUNT = 50
 
-    query = """
-        SELECT *
-        FROM `bigquery-public-data.ml_datasets.ulb_fraud_detection`
-    """
-    print("Fetching data from public dataset...")
-    df = client.query(query).to_dataframe()
 
-    # Timeで昇順ソートし、インデックスをリセット
-    df = df.sort_values(by='Time').reset_index(drop=True)
-
-    # 1〜50の連番を生成
-    print("Generating pseudo Date column...")
-    df['Date'] = (df.index % 50) + 1
-    df['Date'] = df['Date'].astype('int64')
-
-    # 実行日の取得
+def resolve_target_date() -> int:
+    """Resolve the pseudo-date slice (1-50). Defaults to the JST calendar day."""
     target_date_str = os.environ.get("TARGET_DATE")
-    if target_date_str:
-        target_date = int(target_date_str)
-        print(f"Target date specified by environment variable: {target_date}")
+    if target_date_str is not None and target_date_str.strip() != "":
+        try:
+            target_date = int(target_date_str)
+        except ValueError as exc:
+            raise ValueError(
+                f"TARGET_DATE must be an integer, got: {target_date_str!r}"
+            ) from exc
+        logger.info("Target date specified by environment variable: %s", target_date)
     else:
         jst = timezone(timedelta(hours=9))
         target_date = datetime.now(jst).day
-        print(f"Target date from current JST date: {target_date}")
+        logger.info("Target date from current JST date: %s", target_date)
 
-    # 当日のデータのみを抽出
-    print(f"Filtering data for Date == {target_date}...")
-    df_filtered = df[df['Date'] == target_date].copy()
+    if not 1 <= target_date <= PSEUDO_DAY_COUNT:
+        raise ValueError(
+            f"TARGET_DATE must be between 1 and {PSEUDO_DAY_COUNT}, got: {target_date}"
+        )
+    return target_date
 
-    if df_filtered.empty:
-        print(f"No data found for Date == {target_date}. Exiting.")
-        return
 
-    # 【重要】月またぎの重複を防ぐため、日次の一時テーブルとして上書き(TRUNCATE)する
+def run_ingestion() -> None:
+    """
+    Assign a 1-50 pseudo Date (same logic as initial_converted.sqlx), fetch only
+    the target day's rows from the public dataset, and WRITE_TRUNCATE the batch table.
+    """
+    if not PROJECT_ID:
+        raise RuntimeError("PROJECT_ID environment variable is required")
+    if not DESTINATION_TABLE:
+        raise RuntimeError("DESTINATION_TABLE environment variable is required")
+
+    target_date = resolve_target_date()
+    client = bigquery.Client(project=PROJECT_ID)
+
+    # Date assignment matches initial_converted.sqlx:
+    # MOD(ROW_NUMBER() OVER (ORDER BY Time, Amount, V1) - 1, 50) + 1
+    # Filter in BigQuery so the job does not download the full public table.
+    query = f"""
+        WITH numbered AS (
+          SELECT
+            *,
+            MOD(
+              ROW_NUMBER() OVER (ORDER BY Time, Amount, V1) - 1,
+              {PSEUDO_DAY_COUNT}
+            ) + 1 AS Date
+          FROM `bigquery-public-data.ml_datasets.ulb_fraud_detection`
+          WHERE Time IS NOT NULL
+        )
+        SELECT *
+        FROM numbered
+        WHERE Date = @target_date
+    """
+    query_config = bigquery.QueryJobConfig(
+        query_parameters=[
+            bigquery.ScalarQueryParameter("target_date", "INT64", target_date),
+        ]
+    )
+
+    logger.info("Fetching rows for Date == %s from public dataset...", target_date)
+    df = client.query(query, job_config=query_config).to_dataframe()
+
+    if df.empty:
+        raise RuntimeError(
+            f"No rows found for Date == {target_date}. "
+            "Refusing to truncate the destination table."
+        )
+
     job_config = bigquery.LoadJobConfig(
-        write_disposition="WRITE_TRUNCATE",
+        write_disposition=bigquery.WriteDisposition.WRITE_TRUNCATE,
     )
 
-    print(f"Loading data into {DESTINATION_TABLE}...")
+    logger.info("Loading %s rows into %s...", len(df), DESTINATION_TABLE)
     job = client.load_table_from_dataframe(
-        df_filtered, 
-        DESTINATION_TABLE, 
-        job_config=job_config
+        df,
+        DESTINATION_TABLE,
+        job_config=job_config,
     )
-    
     job.result()
-    print(f"Loaded {job.output_rows} rows into {DESTINATION_TABLE}.")
+    logger.info("Loaded %s rows into %s.", job.output_rows, DESTINATION_TABLE)
+
 
 if __name__ == "__main__":
     try:
         run_ingestion()
-    except Exception as e:
-        print(f"Error during ingestion: {e}")
-        raise e
+    except Exception:
+        logger.exception("Error during ingestion")
+        raise

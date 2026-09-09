@@ -1,71 +1,183 @@
+terraform {
+  required_version = ">= 1.5.0"
+
+  required_providers {
+    google = {
+      source  = "hashicorp/google"
+      version = "~> 5.0"
+    }
+    google-beta = {
+      source  = "hashicorp/google-beta"
+      version = "~> 5.0"
+    }
+  }
+}
+
+provider "google" {
+  project = var.project_id
+  region  = var.region
+}
+
+provider "google-beta" {
+  project = var.project_id
+  region  = var.region
+}
+
 variable "project_id" {
   description = "GCP Project ID"
   type        = string
 }
 
 variable "region" {
-  default = "asia-northeast1"
+  description = "GCP region"
+  type        = string
+  default     = "asia-northeast1"
 }
 
-# Artifact Registryの登録名
 variable "repo_docker" {
-  default = "my-repo"
+  description = "Artifact Registry repository name"
+  type        = string
+  default     = "my-repo"
+}
+
+variable "dataform_git_url" {
+  description = "HTTPS URL of the GitHub repository connected to Dataform"
+  type        = string
+  default     = "https://github.com/Ysakairi/credit_detect.git"
+}
+
+variable "dataform_github_token_secret" {
+  description = "Secret Manager version resource name for the GitHub PAT used by Dataform. Leave empty to create the repository without a git remote."
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+resource "google_project_service_identity" "dataform" {
+  provider   = google-beta
+  project    = var.project_id
+  service    = "dataform.googleapis.com"
+  depends_on = [google_project_service.apis]
+}
+
+locals {
+  dataform_sa = "serviceAccount:${google_project_service_identity.dataform.email}"
+  apis = [
+    "bigquery.googleapis.com",
+    "run.googleapis.com",
+    "workflows.googleapis.com",
+    "cloudscheduler.googleapis.com",
+    "dataform.googleapis.com",
+    "iam.googleapis.com",
+    "secretmanager.googleapis.com",
+  ]
 }
 
 # ==========================================
-# 1. IAM サービスアカウントの作成
+# 0. API 有効化
 # ==========================================
-# Run Jobs実行用のSA
+resource "google_project_service" "apis" {
+  for_each           = toset(local.apis)
+  project            = var.project_id
+  service            = each.value
+  disable_on_destroy = false
+}
+
+# ==========================================
+# 1. IAM サービスアカウント
+# ==========================================
 resource "google_service_account" "run_jobs_sa" {
   account_id   = "sa-run-jobs-executor"
   display_name = "Service Account for Cloud Run Jobs"
+  depends_on   = [google_project_service.apis]
 }
-resource "google_project_iam_member" "run_jobs_bq_admin" {
+
+resource "google_bigquery_dataset_iam_member" "run_jobs_bq_editor" {
+  dataset_id = google_bigquery_dataset.dwh_prod.dataset_id
+  role       = "roles/bigquery.dataEditor"
+  member     = "serviceAccount:${google_service_account.run_jobs_sa.email}"
+}
+
+# 公開データセットへのクエリ実行には jobs.create が必要
+resource "google_project_iam_member" "run_jobs_bq_job_user" {
   project = var.project_id
-  role    = "roles/bigquery.dataEditor"
+  role    = "roles/bigquery.jobUser"
   member  = "serviceAccount:${google_service_account.run_jobs_sa.email}"
 }
 
-# Workflows実行用のSA
 resource "google_service_account" "workflows_sa" {
   account_id   = "sa-workflows-orchestrator"
   display_name = "Service Account for Workflows"
+  depends_on   = [google_project_service.apis]
 }
-resource "google_project_iam_member" "workflows_run_invoker" {
+
+resource "google_service_account" "scheduler_sa" {
+  account_id   = "sa-scheduler-trigger"
+  display_name = "Service Account for Cloud Scheduler to trigger Workflows"
+  depends_on   = [google_project_service.apis]
+}
+
+resource "google_project_iam_member" "scheduler_workflows_invoker" {
   project = var.project_id
-  role    = "roles/run.invoker"
-  member  = "serviceAccount:${google_service_account.workflows_sa.email}"
+  role    = "roles/workflows.invoker"
+  member  = "serviceAccount:${google_service_account.scheduler_sa.email}"
 }
+
 resource "google_project_iam_member" "workflows_dataform_editor" {
   project = var.project_id
   role    = "roles/dataform.editor"
   member  = "serviceAccount:${google_service_account.workflows_sa.email}"
 }
 
-# ==========================================
-# 2. BigQuery データセットの作成 (IaC網羅性の向上)
-# ==========================================
+# Dataform 実行基盤 SA（BQML CREATE MODEL / テーブル作成）
+resource "google_bigquery_dataset_iam_member" "dataform_bq_editor" {
+  dataset_id = google_bigquery_dataset.dwh_prod.dataset_id
+  role       = "roles/bigquery.dataEditor"
+  member     = local.dataform_sa
+}
 
+resource "google_project_iam_member" "dataform_bq_job_user" {
+  project = var.project_id
+  role    = "roles/bigquery.jobUser"
+  member  = local.dataform_sa
+}
+
+# ==========================================
+# 2. BigQuery データセット
+# ==========================================
 resource "google_bigquery_dataset" "dwh_prod" {
-dataset_id    = "dwh_prod"
-friendly_name = "DWH Production Dataset"
-description   = "Dataset for fraud detection data pipeline"
-location      = var.region
+  dataset_id    = "dwh_prod"
+  friendly_name = "DWH Production Dataset"
+  description   = "Dataset for fraud detection data pipeline"
+  location      = var.region
+  depends_on    = [google_project_service.apis]
 }
 
 # ==========================================
 # 3. Cloud Run Jobs
 # ==========================================
 resource "google_cloud_run_v2_job" "daily_ingest" {
-  name     = "daily-ingest-job"
-  location = var.region
+  name                = "daily-ingest-job"
+  location            = var.region
+  deletion_protection = false
+  depends_on          = [google_project_service.apis]
 
   template {
     template {
       service_account = google_service_account.run_jobs_sa.email
+      timeout         = "600s"
+      max_retries     = 1
+
       containers {
-        # 事前にビルド・プッシュしたイメージを指定
         image = "${var.region}-docker.pkg.dev/${var.project_id}/${var.repo_docker}/daily-ingest:latest"
+
+        resources {
+          limits = {
+            cpu    = "1"
+            memory = "1Gi"
+          }
+        }
+
         env {
           name  = "PROJECT_ID"
           value = var.project_id
@@ -79,31 +191,60 @@ resource "google_cloud_run_v2_job" "daily_ingest" {
   }
 }
 
+# jobs.run と executions.get（ポーリング）の両方に必要
+resource "google_cloud_run_v2_job_iam_member" "workflows_job_developer" {
+  project  = var.project_id
+  location = var.region
+  name     = google_cloud_run_v2_job.daily_ingest.name
+  role     = "roles/run.developer"
+  member   = "serviceAccount:${google_service_account.workflows_sa.email}"
+}
+
 # ==========================================
-# 4. Workflows
+# 4. Dataform リポジトリ
+# ==========================================
+resource "google_dataform_repository" "fraud_pipeline_repo" {
+  provider     = google-beta
+  project      = var.project_id
+  region       = var.region
+  name         = "fraud-pipeline-repo"
+  display_name = "Credit fraud detection pipeline"
+  depends_on   = [google_project_service.apis]
+
+  dynamic "git_remote_settings" {
+    for_each = var.dataform_github_token_secret == "" ? [] : [1]
+    content {
+      url                                 = var.dataform_git_url
+      default_branch                      = "main"
+      authentication_token_secret_version = var.dataform_github_token_secret
+    }
+  }
+}
+
+# ==========================================
+# 5. Workflows
 # ==========================================
 resource "google_workflows_workflow" "fraud_detection_pipeline" {
   name            = "fraud-detection-pipeline"
   region          = var.region
   description     = "Daily fraud detection ingestion and ML pipeline"
-  service_account = google_service_account.workflows_sa.id
+  service_account = google_service_account.workflows_sa.email
+  depends_on = [
+    google_project_service.apis,
+    google_cloud_run_v2_job.daily_ingest,
+    google_dataform_repository.fraud_pipeline_repo,
+  ]
 
-  # 上記の YAML 定義ファイルを読み込む
+  # Workflows 式は workflow.yaml 側で $${} エスケープ済み
   source_contents = templatefile("${path.module}/workflow.yaml", {
     project_id    = var.project_id
     region        = var.region
     dataform_repo = google_dataform_repository.fraud_pipeline_repo.name
   })
-
-  depends_on = [
-    google_cloud_run_v2_job.daily_ingest,
-    google_bigquery_dataset.dwh_prod,
-    google_dataform_repository.fraud_pipeline_repo
-  ]
 }
 
 # ==========================================
-# 5. Cloud Scheduler (トリガー)
+# 6. Cloud Scheduler
 # ==========================================
 resource "google_cloud_scheduler_job" "daily_trigger" {
   name        = "daily-fraud-pipeline-trigger"
@@ -111,13 +252,14 @@ resource "google_cloud_scheduler_job" "daily_trigger" {
   description = "Trigger workflows daily at 2:00 AM JST"
   schedule    = "0 2 * * *"
   time_zone   = "Asia/Tokyo"
+  depends_on  = [google_project_service.apis]
 
   http_target {
     http_method = "POST"
     uri         = "https://workflowexecutions.googleapis.com/v1/projects/${var.project_id}/locations/${var.region}/workflows/${google_workflows_workflow.fraud_detection_pipeline.name}/executions"
 
     oauth_token {
-      service_account_email = google_service_account.workflows_sa.email
+      service_account_email = google_service_account.scheduler_sa.email
     }
   }
 }
