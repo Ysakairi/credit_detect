@@ -14,7 +14,7 @@ import streamlit as st
 
 from agent.agent import FraudInvestigationAgent
 from agent.backends import build_deps, load_mock_knowledge
-from agent.config import AgentConfig
+from agent.config import AgentConfig, RuntimeDeps
 from agent.tools.knowledge_ingest import documents_from_text
 
 st.set_page_config(page_title="AI Fraud Investigation Console", layout="wide")
@@ -65,6 +65,12 @@ def _config_from_sidebar() -> AgentConfig:
     )
 
 
+def _mock_store():
+    if "mock_knowledge" not in st.session_state:
+        st.session_state.mock_knowledge = load_mock_knowledge()
+    return st.session_state.mock_knowledge
+
+
 def _query_reasoning_engine(resource_name: str, user_query: str) -> dict:
     import vertexai
     from vertexai.preview import reasoning_engines
@@ -76,6 +82,13 @@ def _query_reasoning_engine(resource_name: str, user_query: str) -> dict:
 
 def _run_local(config: AgentConfig, user_query: str) -> dict:
     deps = build_deps(config)
+    if config.backend == "mock":
+        deps = RuntimeDeps(
+            config=config,
+            llm=deps.llm,
+            sql_runner=deps.sql_runner,
+            knowledge=_mock_store(),
+        )
     agent = FraudInvestigationAgent(
         project_id=config.project_id,
         location=config.location,
@@ -92,8 +105,7 @@ def _ingest_upload(config: AgentConfig, filename: str, raw: bytes) -> int:
     text = raw.decode("utf-8", errors="replace")
     docs = documents_from_text(text, title=Path(filename).stem, source_uri=filename)
     if config.backend == "mock":
-        store = st.session_state.setdefault("mock_knowledge", load_mock_knowledge())
-        return store.upsert(docs)
+        return _mock_store().upsert(docs)
     from agent.tools.bq_vector_search import BigQueryKnowledgeStore
 
     return BigQueryKnowledgeStore(config).upsert(docs)
