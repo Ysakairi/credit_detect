@@ -1,5 +1,10 @@
 # Terraform templatefile injects project_id, region, and dataform_repo.
 # Workflows expressions are dollar-dollar-escaped so they survive templatefile.
+#
+# GCP: Cloud Workflows が Cloud Run Jobs と Dataform を直列起動する。
+# 実行 SA は sa-workflows-orchestrator（run.developer + dataform.editor）。
+# jobs.run / compilationResults.create は非同期のため、完了をポーリングする。
+# poll 10s × 60 回 = 600s は Cloud Run Job timeout と揃えて打ち切る。
 
 main:
   steps:
@@ -20,6 +25,8 @@ main:
             name: namespaces/${project_id}/jobs/daily-ingest-job
             location: ${region}
           result: job_execution
+        # 起動 API の 429/5xx のみ再試行。Job 本体の失敗は下の status 判定で扱う
+        #（成功した実行を二重起動しない）。backoff はコネクタの既定に近い 2s→32s。
         retry:
           predicate: $${retry.transient_errors}
           max_retries: 5

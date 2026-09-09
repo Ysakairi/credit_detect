@@ -1,3 +1,9 @@
+"""Cloud Run Job 取り込み処理の単体テスト。
+
+実 GCP（BigQuery / ADC）は呼ばない。クロスリージョン Query/Load の
+リトライ引数・空スライスでの TRUNCATE 拒否・クライアント再利用を固定する。
+"""
+
 import json
 import logging
 import os

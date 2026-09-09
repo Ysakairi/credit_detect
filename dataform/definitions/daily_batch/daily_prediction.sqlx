@@ -7,7 +7,10 @@ config {
 }
 
 -- 日次バッチ(3) 推論（予測）結果テーブルの作成
--- 学習に使っていない疑似日付 1〜31 のスライスのみを推論対象とする
+-- GCP: BigQuery ML ML.PREDICT。モデルは TRANSFORM 済み BOOSTED_TREE。
+-- 学習に使っていない疑似日付 1〜31 のスライスのみを推論対象とする（リーク防止）。
+-- predicted_Class_probs は ARRAY のため Looker Studio では使えない。不正クラスの
+-- スカラー確率だけ残す。CREATE OR REPLACE なので同じ日の再実行はべき等。
 
 SELECT
   * EXCEPT(predicted_Class_probs),

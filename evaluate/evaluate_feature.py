@@ -1,6 +1,13 @@
-"""
-Python REPL ノードで実行される高度特徴量妥当性検証ロジック
-SOP-MLOPS-2026-002 第7章
+"""SOP-MLOPS-2026-002 第7章: 調査エージェント Python REPL 用の特徴量検証。
+
+GCP サービス:
+    このモジュール自体は BigQuery / Cloud Run を呼ばない（numpy 計算のみ）。
+    本番の日次指標は Dataform + BigQuery ML（``dwh_prod`` の evaluation_* テーブル）
+    が算出する。こちらはエージェントが対話的に同じ判定閾値を再現するための実装。
+
+なぜ別実装があるか:
+    REPL では全件交差（Cliff's Delta）がメモリ上で破綻しうる。SOP は陽性 500 /
+    陰性 1000 にサンプルする。Dataform 側は度数の累積で交差結合を避けている。
 """
 
 from __future__ import annotations
@@ -16,13 +23,17 @@ except ImportError:  # pragma: no cover - scipy is optional for local tests
 
 
 def _as_1d(values: Iterable[float]) -> np.ndarray:
+    """NaN/Inf を落とす。PCA 特徴の欠損を Z/KS の分母に混ぜないため。"""
     arr = np.asarray(values, dtype=np.float64)
     arr = arr[np.isfinite(arr)]
     return arr.reshape(-1)
 
 
 def ks_2samp(fraud_vals: np.ndarray, normal_vals: np.ndarray) -> tuple[float, float]:
-    """Two-sample KS statistic and p-value (scipy if available)."""
+    """二標本 KS。分布形状を仮定しない分離度として Z スコア差を補完する。
+
+    scipy があれば p-value も返す。未導入環境（テストイメージ）では統計量のみ。
+    """
     if scipy_stats is not None:
         result = scipy_stats.ks_2samp(fraud_vals, normal_vals)
         return float(result.statistic), float(result.pvalue)
@@ -45,7 +56,12 @@ def cliffs_delta(
     max_normal: int = 1000,
     rng: Optional[np.random.Generator] = None,
 ) -> float:
-    """SOP 3.3 / 第7章: 大規模時はサンプルダウンして δ を算出する。"""
+    """SOP 3.3 / 第7章: 大規模時はサンプルダウンして δ を算出する。
+
+    全対比較は O(n1*n0)。日次バッチの陰性は数千件でも、学習全量を REPL に
+    載せるとメモリが Cloud Run / ノートブック上限を超える。500×1000 は SOP 指定。
+    乱数シード既定 0 は、調査レポートを再実行しても δ がぶれないようにするため。
+    """
     rng = rng or np.random.default_rng(0)
     s_fraud = fraud_vals
     s_normal = normal_vals
@@ -67,7 +83,11 @@ def information_value(
     normal_vals: np.ndarray,
     n_bins: int = 10,
 ) -> tuple[float, np.ndarray]:
-    """Equal-frequency bins with Laplace smoothing. Returns (IV, per-bin WoE)."""
+    """等頻度 10 ビン + Laplace 平滑の IV。SOP 3.2 および Dataform の NTILE(10) に合わせる。
+
+    空クラスビンで ln(0) にならないよう 0.5 を足す。ビン数 10 は信用スコアリング
+    慣例で、PSI（第6章）の 10 ビンとも揃えている。
+    """
     values = np.concatenate([normal_vals, fraud_vals])
     labels = np.concatenate(
         [np.zeros(len(normal_vals), dtype=int), np.ones(len(fraud_vals), dtype=int)]
@@ -97,6 +117,7 @@ def information_value(
 
 
 def rate_ks(ks_stat: float) -> str:
+    """SOP 3.1 の境界。0.40 がマトリクス上の「優秀」ライン。"""
     if ks_stat >= 0.50:
         return "卓越"
     if ks_stat >= 0.40:
@@ -107,6 +128,7 @@ def rate_ks(ks_stat: float) -> str:
 
 
 def rate_iv(iv: float) -> str:
+    """SOP 3.2。0.50 以上はリーク疑いであり「強い」より一段厳しく見る。"""
     if iv >= 0.50:
         return "過学習疑い"
     if iv >= 0.30:
@@ -119,6 +141,7 @@ def rate_iv(iv: float) -> str:
 
 
 def rate_cliffs(delta: float) -> str:
+    """Romano et al. の効果量区分（SOP 3.3）。合否ではなく大きさのラベル。"""
     abs_d = abs(delta)
     if abs_d >= 0.474:
         return "Large"
@@ -130,18 +153,22 @@ def rate_cliffs(delta: float) -> str:
 
 
 def rate_z(z_score_diff: float) -> str:
+    """参考値。正規性を仮定するため一次合否には使わない（SOP 1.1）。"""
     return "有意 (参考)" if abs(z_score_diff) >= 3.0 else "参考値未満"
 
 
 def rate_pr_auc(pr_auc: float) -> str:
+    """本番デプロイの一次指標。不均衡下の ROC-AUC 見かけ倒しを避ける（SOP 5.1）。"""
     return "PASS" if pr_auc >= 0.80 else "FAIL"
 
 
 def rate_capture_0_1(rate: float) -> str:
+    """審査キャパシティ制約下の Top-0.1% 捕捉。マトリクス閾値 0.75。"""
     return "PASS" if rate >= 0.75 else "FAIL"
 
 
 def rate_psi(psi: float) -> str:
+    """日次スコア分布のドリフト。Red（>=0.25）は再学習トリガー（SOP 6.1 / 8章）。"""
     if psi < 0.10:
         return "Green"
     if psi < 0.25:
@@ -152,8 +179,10 @@ def rate_psi(psi: float) -> str:
 def evaluate_feature_comprehensive(
     normal_vals: np.ndarray, fraud_vals: np.ndarray
 ) -> dict:
-    """
-    Zスコア、KS統計量、Cliff's Delta、歪度・尖度を統合計算する
+    """Zスコア、KS、Cliff's Delta、歪度・尖度、IV を一度に返す。
+
+    is_strong_separator は SOP 第7章どおり KS>=0.40 かつ |δ|>=0.33。
+    1e-9 を std に足すのは、定数特徴で ZeroDivision にしないため。
     """
     normal_vals = _as_1d(normal_vals)
     fraud_vals = _as_1d(fraud_vals)
@@ -208,7 +237,11 @@ def evaluate_feature_comprehensive(
 def population_stability_index(
     baseline: np.ndarray, daily: np.ndarray, n_bins: int = 10
 ) -> Dict[str, float]:
-    """Equal-width PSI on scores assumed in [0, 1]."""
+    """学習時スコア vs 日次スコアの PSI。Dataform ``daily_psi.sqlx`` と同じ 10 均等幅。
+
+    空ビンを 1e-4 にするのは ln(0) 回避（SOP 6.1 の実装慣例）。
+    クリップ [0,1] は予測確率を想定しているため。
+    """
     baseline = _as_1d(baseline)
     daily = _as_1d(daily)
     edges = np.linspace(0.0, 1.0, n_bins + 1)

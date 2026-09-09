@@ -164,20 +164,25 @@ resource "google_cloud_run_v2_job" "daily_ingest" {
 
   template {
     template {
+      # ADC 用 SA。キーはコンテナに埋め込まない。
       service_account = google_service_account.run_jobs_sa.email
+      # 600s: 公開データ Query（US）+ 地域 Load。アプリ側 Job 待ちは 480s で先に落とす。
       timeout         = "600s"
+      # 3: アプリの Exponential Backoff で足りない起動時障害向け。WRITE_TRUNCATE なので再実行はべき等。
       max_retries     = 3
 
       containers {
         image = "${var.region}-docker.pkg.dev/${var.project_id}/${var.repo_docker}/daily-ingest:latest"
 
         resources {
+          # 日次スライスは約 1/50。全表ダウンロードをやめた前提の上限。
           limits = {
             cpu    = "1"
             memory = "1Gi"
           }
         }
 
+        # 機密ではない構成値。Secret Manager は GitHub PAT（Dataform）側で使う。
         env {
           name  = "PROJECT_ID"
           value = var.project_id

@@ -1,3 +1,30 @@
+"""Cloud Run Job: 日次の不正検知バッチを BigQuery に取り込む。
+
+GCP サービス:
+    - Cloud Run Jobs: 本モジュールの実行環境。Scheduler → Workflows から起動される。
+    - BigQuery: 公開データセットからの抽出と、地域データセットへのロード。
+    - Cloud Logging: stdout の JSON を構造化ログとして収集（Logging クライアントは使わない）。
+
+認証 / IAM:
+    Application Default Credentials (ADC)。サービスアカウントは
+    ``sa-run-jobs-executor``（``roles/bigquery.jobUser`` + データセット
+    ``roles/bigquery.dataEditor``）。キーファイルは埋め込まない。
+
+必須環境変数（Terraform が Job に注入）:
+    PROJECT_ID          ロード先プロジェクト
+    DESTINATION_TABLE   ``project.dataset.table`` 形式
+
+任意:
+    TARGET_DATE, BQ_QUERY_LOCATION, BQ_API_TIMEOUT_SECONDS, BQ_JOB_TIMEOUT_SECONDS
+
+設計上の制約:
+    公開テーブル ``bigquery-public-data.ml_datasets.ulb_fraud_detection`` は US
+    マルチリージョン、宛先 ``dwh_prod`` は asia-northeast1。BigQuery は
+    クエリジョブと宛先テーブルのリージョンを一致させる必要があるため、
+    ``destination`` 付きの単一クエリでは書けない。Query（US）→ クライアント経由 →
+    Load（asia-northeast1）に分解する。
+"""
+
 import json
 import logging
 import os
@@ -12,20 +39,28 @@ from google.cloud import bigquery
 
 PROJECT_ID = os.environ.get("PROJECT_ID")
 DESTINATION_TABLE = os.environ.get("DESTINATION_TABLE")
+# 公開データを 50 疑似日に分割する。initial_converted.sqlx / README の運用前提と一致させる。
 PSEUDO_DAY_COUNT = 50
 # Public ulb_fraud_detection lives in the US multi-region. The destination
 # dataset is regional (asia-northeast1), so results must be loaded rather
 # than written with a same-region destination table.
 BQ_QUERY_LOCATION = os.environ.get("BQ_QUERY_LOCATION", "US")
-# Cloud Run Job timeout is 600s; fail slightly earlier with a clear error.
+# Cloud Run Job の timeout は 600s（terraform/main.tf）。API 開始は短く切り、
+# ジョブ完了待ちは 480s でクライアント側フェイルファストし、コンテナ kill より先に
+# 原因付きで落とす。残りの余裕はリトライとログ flush 用。
 BQ_API_TIMEOUT_SECONDS = float(os.environ.get("BQ_API_TIMEOUT_SECONDS", "60"))
 BQ_JOB_TIMEOUT_SECONDS = float(os.environ.get("BQ_JOB_TIMEOUT_SECONDS", "480"))
 
+# テーブル ID はクエリパラメータにできないため文字列連結が必要。
+# 想定外の識別子（SQL 断片）を拒否してロード先の取り違えを防ぐ。
 _TABLE_ID_RE = re.compile(
     r"^[a-zA-Z0-9_-]+\.[a-zA-Z0-9_]+\.[a-zA-Z0-9_]+$"
 )
 
-# Transient GCP / network errors: exponential backoff (1s -> 32s, 180s budget).
+# 429/5xx など if_transient_error に載る障害だけを再試行する。
+# initial=1s, multiplier=2, max=32s は GCP クライアントの既定に近い形。
+# timeout=180s は「RPC の再試行予算」であり、ジョブ本体の 480s とは別。
+# 4xx（権限不足・スキーマ不正）は再試行しても直らないので対象外。
 API_RETRY = retry.Retry(
     predicate=retry.if_transient_error,
     initial=1.0,
@@ -38,7 +73,12 @@ _client: Optional[bigquery.Client] = None
 
 
 class CloudLoggingJsonFormatter(logging.Formatter):
-    """stdout JSON logs that Cloud Logging maps to severity and jsonPayload."""
+    """Cloud Logging が jsonPayload / severity として解釈できる 1 行 JSON にする。
+
+    google-cloud-logging を使わない理由:
+        追加の Logging API IAM と依存関係が不要で、Cloud Run は stdout を
+        自動収集するため。テキストログだと severity フィルタが効きにくい。
+    """
 
     _SEVERITY = {
         "DEBUG": "DEBUG",
@@ -63,6 +103,7 @@ class CloudLoggingJsonFormatter(logging.Formatter):
 
 
 def configure_logging() -> logging.Logger:
+    """stdout へ JSON を出す。propagate=False でルートロガーのテキスト二重出力を避ける。"""
     logger = logging.getLogger("daily_insert")
     if logger.handlers:
         return logger
@@ -78,11 +119,17 @@ logger = configure_logging()
 
 
 def log(level: int, message: str, **fields: Any) -> None:
+    """構造化フィールド（target_date, job_id 等）を jsonPayload に載せる。"""
     logger.log(level, message, extra={"json_fields": fields} if fields else None)
 
 
 def get_bq_client(project_id: Optional[str] = None) -> bigquery.Client:
-    """Reuse one BigQuery client for the process (Cloud Run Job lifecycle)."""
+    """BigQuery クライアントをプロセス内で再利用する。
+
+    Cloud Run Job はリクエストのたびにプロセスが起きるわけではないが、
+    認証トークンと HTTP セッションの再作成を避け、テストでは同一インスタンスを
+    差し込めるようにする。認証は ADC（メタデータサーバ上の Job SA）。
+    """
     global _client
     if _client is None:
         resolved = project_id or PROJECT_ID
@@ -93,12 +140,13 @@ def get_bq_client(project_id: Optional[str] = None) -> bigquery.Client:
 
 
 def reset_bq_client() -> None:
-    """Test helper to drop the cached client."""
+    """テストでキャッシュされたクライアントを捨てる。本番 Job では呼ばない。"""
     global _client
     _client = None
 
 
 def validate_destination_table(table_id: str) -> str:
+    """ロード先 ID を検証する。BigQuery はテーブル名をクエリパラメータにできない。"""
     if not _TABLE_ID_RE.match(table_id):
         raise ValueError(
             "DESTINATION_TABLE must be project.dataset.table "
@@ -108,7 +156,12 @@ def validate_destination_table(table_id: str) -> str:
 
 
 def resolve_target_date() -> int:
-    """Resolve the pseudo-date slice (1-50). Defaults to the JST calendar day."""
+    """疑似日付 1〜50 を決める。既定は JST のカレンダー日。
+
+    Cloud Scheduler は Asia/Tokyo 02:00 起動のため、スライスを JST の day に
+    合わせる。月は 31 日までなので本番の日次は 1〜31 のみ（学習用 32〜50 は
+    initial_setup の一括ロード側）。TARGET_DATE は手動再実行・テスト用。
+    """
     target_date_str = os.environ.get("TARGET_DATE")
     if target_date_str is not None and target_date_str.strip() != "":
         try:
@@ -131,6 +184,7 @@ def resolve_target_date() -> int:
 
 
 def _wait_for_job(job: Any, *, timeout: float) -> Any:
+    """ジョブ完了まで待つ。timeout は Cloud Run 600s より短くし、job_id をログに残す。"""
     try:
         return job.result(timeout=timeout, retry=API_RETRY)
     except gcp_exceptions.GoogleAPICallError:
@@ -145,7 +199,16 @@ def _wait_for_job(job: Any, *, timeout: float) -> Any:
 
 
 def fetch_daily_slice(client: bigquery.Client, target_date: int):
-    """Query the US public dataset for one pseudo-day. Does not write the dest table."""
+    """US 公開データから 1 疑似日だけを抽出する。宛先テーブルはまだ書き換えない。
+
+    フィルタを BigQuery 側で行うのは、約 28 万行の全表を Cloud Run（1Gi）へ
+    落とさないため。日次スライスは約 1/50 で、クォータ的にもページングを自前実装
+    する必要はない（クライアント SDK が REST ページを透過的に辿る）。
+
+    create_bqstorage_client=False:
+        Storage Read API は ``roles/bigquery.readSessionUser`` が別途必要。
+        Job SA には付与していないため、日次件数なら REST で足りる。
+    """
     query = f"""
         WITH numbered AS (
           SELECT
@@ -191,6 +254,12 @@ def fetch_daily_slice(client: bigquery.Client, target_date: int):
 
 
 def load_daily_slice(client: bigquery.Client, df, table_id: str) -> int:
+    """地域データセットへロードする。WRITE_TRUNCATE で Job 再実行をべき等にする。
+
+    Cloud Run Job の max_retries や Workflows リトライで二重実行されても、
+    同じ疑似日の全量で置き換わるため重複行は残らない。空 DataFrame での
+    TRUNCATE は run_ingestion 側で拒否する（前日データを消さないため）。
+    """
     job_config = bigquery.LoadJobConfig(
         write_disposition=bigquery.WriteDisposition.WRITE_TRUNCATE,
         labels={
@@ -216,12 +285,11 @@ def load_daily_slice(client: bigquery.Client, df, table_id: str) -> int:
 
 
 def run_ingestion(client: Optional[bigquery.Client] = None) -> None:
-    """
-    Assign a 1-50 pseudo Date (same logic as initial_converted.sqlx), fetch only
-    the target day's rows from the public dataset, and WRITE_TRUNCATE the batch table.
+    """疑似日付スライスを公開データから取り、バッチテーブルを WRITE_TRUNCATE する。
 
-    Source data is in the US public dataset while the destination is regional, so
-    the slice is queried then loaded (a single destination query cannot cross regions).
+    Date の付け方は ``initial_converted.sqlx`` と一致させる（学習・推論の
+    リーク防止）。空スライスで Load しないのは、WRITE_TRUNCATE が既存行を
+    消すため。client 引数は ADC を使わない単体テスト用。
     """
     if not PROJECT_ID:
         raise RuntimeError("PROJECT_ID environment variable is required")
