@@ -1,0 +1,47 @@
+"""Knowledge chunking and in-memory search."""
+
+import unittest
+
+from agent.tools.bq_vector_search import InMemoryKnowledgeStore, chunk_text
+from agent.tools.knowledge_ingest import documents_from_text
+
+
+class KnowledgeTest(unittest.TestCase):
+    def test_chunk_by_heading(self):
+        text = "# A\nhello\n# B\nworld"
+        chunks = chunk_text(text)
+        self.assertGreaterEqual(len(chunks), 2)
+
+    def test_documents_from_text_ids_stable(self):
+        docs = documents_from_text("PCI-DSS card testing\n" * 20, title="pci")
+        self.assertTrue(docs)
+        self.assertEqual(docs[0]["category"], "PCI_DSS")
+
+    def test_keyword_search(self):
+        store = InMemoryKnowledgeStore()
+        store.upsert(
+            documents_from_text(
+                "fraud_probability 0.85 以上は即時監視。V14 を監査する。",
+                title="policy",
+            )
+        )
+        hits = store.search("0.85 V14 即時監視")
+        self.assertTrue(hits)
+        self.assertIn("0.85", hits[0]["content"])
+
+    def test_title_query_ranks_matching_manual(self):
+        store = InMemoryKnowledgeStore()
+        store.upsert(documents_from_text("カードテストのBIN攻撃", title="pci_dss_card_testing"))
+        store.upsert(
+            documents_from_text(
+                "第2条 即時監視: fraud_probability >= 0.85 かつ Amount >= 200",
+                title="pol_sec_2026_004",
+            )
+        )
+        hits = store.search("POL-SEC-2026-004 第2条の即時監視")
+        self.assertTrue(hits)
+        self.assertIn("pol_sec", hits[0]["title"])
+
+
+if __name__ == "__main__":
+    unittest.main()
