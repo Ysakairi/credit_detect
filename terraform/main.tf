@@ -166,7 +166,7 @@ resource "google_cloud_run_v2_job" "daily_ingest" {
     template {
       service_account = google_service_account.run_jobs_sa.email
       timeout         = "600s"
-      max_retries     = 1
+      max_retries     = 3
 
       containers {
         image = "${var.region}-docker.pkg.dev/${var.project_id}/${var.repo_docker}/daily-ingest:latest"
