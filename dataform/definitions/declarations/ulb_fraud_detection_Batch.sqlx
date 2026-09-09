@@ -1,0 +1,6 @@
+config {
+  type: "declaration",
+  schema: "dwh_prod",
+  name: "ulb_fraud_detection_Batch",
+  description: "Daily slice loaded by Cloud Run Jobs (WRITE_TRUNCATE)"
+}

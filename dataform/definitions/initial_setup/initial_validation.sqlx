@@ -13,6 +13,6 @@ config {
 SELECT
   *
 FROM
-  ${ref("ulb_fraud_detection_converted")} 
+  ${ref("ulb_fraud_detection_converted")}
 WHERE
-  Date BETWEEN 32 AND 36;
+  Date BETWEEN 32 AND 36
