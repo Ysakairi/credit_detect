@@ -130,16 +130,27 @@ resource "google_project_iam_member" "workflows_dataform_editor" {
 }
 
 # Dataform 実行基盤 SA（BQML CREATE MODEL / テーブル作成）
+# google_project_service_identity はメールを返すが、SA 本体はリポジトリ作成後に
+# 見えることが多い。先に repository を作り、それでも無い場合は README ⑤ の
+# `gcloud beta services identity create` を先に実行する。
 resource "google_bigquery_dataset_iam_member" "dataform_bq_editor" {
   dataset_id = google_bigquery_dataset.dwh_prod.dataset_id
   role       = "roles/bigquery.dataEditor"
   member     = local.dataform_sa
+  depends_on = [
+    google_project_service_identity.dataform,
+    google_dataform_repository.fraud_pipeline_repo,
+  ]
 }
 
 resource "google_project_iam_member" "dataform_bq_job_user" {
   project = var.project_id
   role    = "roles/bigquery.jobUser"
   member  = local.dataform_sa
+  depends_on = [
+    google_project_service_identity.dataform,
+    google_dataform_repository.fraud_pipeline_repo,
+  ]
 }
 
 # ==========================================
@@ -214,7 +225,10 @@ resource "google_dataform_repository" "fraud_pipeline_repo" {
   region       = var.region
   name         = "fraud-pipeline-repo"
   display_name = "Credit fraud detection pipeline"
-  depends_on   = [google_project_service.apis]
+  depends_on = [
+    google_project_service.apis,
+    google_project_service_identity.dataform,
+  ]
 
   dynamic "git_remote_settings" {
     for_each = var.dataform_github_token_secret == "" ? [] : [1]
