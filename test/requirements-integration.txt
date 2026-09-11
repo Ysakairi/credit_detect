@@ -1,0 +1,6 @@
+google-cloud-bigquery[pandas]==3.*
+google-cloud-run>=0.10
+google-api-python-client>=2.0
+google-auth>=2.0
+db-dtypes==1.*
+pandas>=2.0
