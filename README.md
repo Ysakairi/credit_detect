@@ -300,7 +300,46 @@ repo_docker = "my-repo"
 
 ## ⑤ Terraform
 
-`terraform/` で:
+`google_project_service` は apply 時に Service Usage API へ `serviceusage.services.list` します。この API が未有効だと、権限不足に見える 403 になります。
+
+```
+Permission denied to list services for consumer container [projects/PROJECT_NUMBER]
+permission: serviceusage.services.list
+```
+
+Terraform はこの一覧取得ができないと API を有効化できないため、**先に gcloud で土台 API を有効化**します（IaC だけでは初回を解けません）。Terraform は `gcloud` のユーザーログインではなく **ADC** を使います。
+
+apply の前に `terraform/` の外で:
+
+```bash
+PROJECT_ID="$(gcloud config get-value project)"
+
+# Terraform 用の ADC（① をまだなら）
+gcloud auth application-default login
+gcloud auth application-default set-quota-project "${PROJECT_ID}"
+
+# List Project Services に必要。未有効だと上記 403 になる
+gcloud services enable \
+  serviceusage.googleapis.com \
+  cloudresourcemanager.googleapis.com
+```
+
+`gcloud services enable` 自体が 403 なら、実行アカウントに Owner または Service Usage Admin がありません。プロジェクト Owner が付与します。
+
+```bash
+ACCOUNT="$(gcloud config get-value account)"
+gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
+  --member="user:${ACCOUNT}" \
+  --role="roles/serviceusage.serviceUsageAdmin"
+```
+
+確認:
+
+```bash
+gcloud services list --enabled --filter="config.name:(serviceusage.googleapis.com OR cloudresourcemanager.googleapis.com)"
+```
+
+その後 `terraform/` で:
 
 ```bash
 cd terraform
@@ -442,7 +481,7 @@ gcloud run jobs execute daily-ingest-job --region=asia-northeast1 --wait
 
 失敗しやすい点:
 
-- Cloud Build が `storage.objects.get` で 403 → Compute デフォルト SA に ③ の IAM が未付与
+- terraform apply が `serviceusage.services.list` で 403 → Service Usage / Cloud Resource Manager を gcloud で有効化し、ADC をやり直す
 - `--tag` のプロジェクト ID がプレースホルダのまま → ① の `gcloud config` と一致させる
 - ⑦より先に Workflows を回す → モデルなしで `ML.PREDICT` 失敗
 - Dataform が `credit_detect` 本体を向いている → sqlx がコンパイルされない
@@ -460,7 +499,7 @@ gcloud run jobs execute daily-ingest-job --region=asia-northeast1 --wait
 | ② 単体テスト | `evaluate/` と `batch_app/` の 2 系統 |
 | ③ AR 登録 | Compute デフォルト SA に Storage / Logging / AR 権限 + **`batch_app/` から** Cloud Build |
 | ④ プロジェクト情報 | **`terraform.tfvars`。`main.tf` は触らない** |
-| ⑤ terraform | Scheduler が即時有効 |
+| ⑤ terraform | 先に Service Usage / Resource Manager を gcloud で有効化。Scheduler が即時有効 |
 | ⑥ Dataform Git |接続先は `credit_detect_dataform`。Secret の IAM は手動 |
 | ⑦ 初回 sqlx |タグ `initial_setup` |
 | ⑧ 結合試験 | Workflows を 1 回手動実行 |
