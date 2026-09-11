@@ -487,9 +487,48 @@ URL にユーザー名や PAT を含めない。末尾は `.git`。
 
 ## ⑦ Dataform で初回用 sqlx（`initial_setup`）を実行
 
-日次 Workflows は `daily_batch` だけです。モデル作成は初回の手動実行です。
+日次 Workflows は `daily_batch` だけです。モデル作成は初回の手動実行です。コンソールから実行するには、先に **開発ワークスペースを作り、そこでコンパイル** します。リポジトリの `main` を直接コンパイルする欄はありません。
 
-タグ `initial_setup` の依存順:
+### 使う ID
+
+| 項目 | 値 |
+| --- | --- |
+| プロジェクト ID | `gcloud config get-value project`（例: `skir-sample-credit`） |
+| ロケーション | `asia-northeast1` |
+| Dataform リポジトリ ID | `fraud-pipeline-repo` |
+| ワークスペース ID | `initial-setup`（英数字・ハイフン・アンダースコアのみ。リポジトリ内で一意） |
+| Git デフォルト ブランチ | `main` |
+| 実行タグ | `initial_setup` |
+
+ワークスペースのリソース名:
+
+```
+projects/YOUR_PROJECT_ID/locations/asia-northeast1/repositories/fraud-pipeline-repo/workspaces/initial-setup
+```
+
+### 開発ワークスペースを作成する
+
+1. BigQuery → Dataform → `fraud-pipeline-repo`
+2. **開発ワークスペース** タブ → **開発ワークスペースを作成**
+3. ワークスペース ID: `initial-setup` → 作成
+
+⑥ で Git 接続済みなら、空のテンプレートで初期化しない。**「ワークスペースを初期化」は使わない**（`sample.sqlx` などが入り、`credit_detect_dataform` の sqlx と食い違う）。
+
+ファイルが見えない／空なら、ワークスペースを開き **Git → リモートから pull**（デフォルト ブランチ `main`）。`definitions/initial_setup/` と `definitions/daily_batch/` が見えること。
+
+### コンパイルする
+
+コンソールはワークスペースを開くと自動コンパイルします。
+
+1. `initial-setup` を開く
+2. 画面上部のコンパイル状態が成功であること
+3. **コンパイル済みグラフ** タブで DAG が出ること（エラー文言ではなくグラフ）
+
+失敗しやすい例: `dataform.json` の `defaultDatabase` が実プロジェクトと違う、Git 先が `credit_detect` 本体で `definitions/` がネストしている。
+
+### タグ `initial_setup` を実行する
+
+依存順:
 
 1. `ulb_fraud_detection_converted` … 公開データ全件 + Hour + 疑似 Date 1–50  
 2. `ulb_fraud_detection_validation` … Date 32–36  
@@ -498,20 +537,35 @@ URL にユーザー名や PAT を含めない。末尾は `.git`。
 
 コンソール:
 
-1. Dataform → `fraud-pipeline-repo` → `main` をコンパイル
-2. 実行を開始 → タグ **`initial_setup`**（依存関係を含める）
-3. `CREATE MODEL` 完了まで待つ（数分〜十数分、課金の主因）
+1. ワークスペース `initial-setup` のツールバー → **実行を開始 → アクションを実行**
+2. **タグの選択** → `initial_setup`
+3. **依存関係を含める** をオン（従属はオフでよい）
+4. 開始
+5. `CREATE MODEL` 完了まで待つ（数分〜十数分、課金の主因）。実行タブで状態を確認
 
 この時点では Cloud Run の Batch テーブルは不要です。初期変換は公開データセットを直接読みます。
 
 確認:
 
 ```bash
-bq ls --location=asia-northeast1 YOUR_PROJECT_ID:dwh_prod
-bq show -m YOUR_PROJECT_ID:dwh_prod.ulb_fraud_detection_model
+PROJECT_ID="$(gcloud config get-value project)"
+bq ls --location=asia-northeast1 "${PROJECT_ID}:dwh_prod"
+bq show -m "${PROJECT_ID}:dwh_prod.ulb_fraud_detection_model"
 ```
 
 モデルが無いと推論は失敗します。
+
+gcloud でワークスペースを作る場合の例:
+
+```bash
+PROJECT_ID="$(gcloud config get-value project)"
+gcloud dataform workspaces create initial-setup \
+  --project="${PROJECT_ID}" \
+  --location=asia-northeast1 \
+  --repository=fraud-pipeline-repo
+```
+
+コマンドが無い環境ではコンソールで作成する。コンパイルとタグ実行もコンソールが確実です。
 
 ---
 
@@ -571,5 +625,5 @@ gcloud run jobs execute daily-ingest-job --region=asia-northeast1 --wait
 | ④ プロジェクト情報 | **`terraform.tfvars`。`main.tf` は触らない** |
 | ⑤ terraform | 先に Service Usage / Resource Manager / Dataform identity を gcloud で用意。Scheduler が即時有効 |
 | ⑥ Dataform Git | 接続先は `credit_detect_dataform`。HTTPS は Secret Manager の PAT + Dataform SA の `secretAccessor` |
-| ⑦ 初回 sqlx |タグ `initial_setup` |
+| ⑦ 初回 sqlx | ワークスペース ID `initial-setup` を作成してコンパイル。タグ `initial_setup` |
 | ⑧ 結合試験 | Workflows を 1 回手動実行 |
