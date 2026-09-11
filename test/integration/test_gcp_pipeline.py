@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 import unittest
 from pathlib import Path
@@ -181,14 +182,15 @@ class EnvironmentTest(unittest.TestCase):
         body = GcpHelpers.get_json(url)
         self.assertIn("name", body)
 
-    def test_project_id_matches_dataform_json(self):
-        dataform_json = json.loads(
-            (ROOT / "dataform" / "dataform.json").read_text(encoding="utf-8")
+    def test_project_id_matches_workflow_settings(self):
+        settings = (ROOT / "dataform" / "workflow_settings.yaml").read_text(
+            encoding="utf-8"
         )
+        project = re.search(r"^defaultProject:\s*(\S+)", settings, re.M).group(1)
         self.assertEqual(
-            dataform_json["defaultDatabase"],
+            project,
             PROJECT_ID,
-            msg="dataform.json の defaultDatabase と GCP_PROJECT_ID が不一致",
+            msg="workflow_settings.yaml の defaultProject と GCP_PROJECT_ID が不一致",
         )
 
 

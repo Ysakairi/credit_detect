@@ -98,13 +98,20 @@ class DataformSqlTest(unittest.TestCase):
         self.assertIn('"V12"', text)
 
     def test_dataform_project_consistency(self):
-        dataform_json = json.loads(read("dataform/dataform.json"))
         settings = read("dataform/workflow_settings.yaml")
         project = re.search(r"^defaultProject:\s*(\S+)", settings, re.M).group(1)
         dataset = re.search(r"^defaultDataset:\s*(\S+)", settings, re.M).group(1)
-        self.assertEqual(dataform_json["defaultDatabase"], project)
-        self.assertEqual(dataform_json["defaultSchema"], dataset)
-        self.assertEqual(dataform_json["defaultLocation"], "asia-northeast1")
+        location = re.search(r"^defaultLocation:\s*(\S+)", settings, re.M).group(1)
+        self.assertTrue(project)
+        self.assertEqual(dataset, "dwh_prod")
+        self.assertEqual(location, "asia-northeast1")
+
+    def test_dataform_json_is_absent(self):
+        # Dataform core 3.0 rejects dataform.json alongside workflow_settings.yaml.
+        self.assertFalse(
+            (ROOT / "dataform" / "dataform.json").exists(),
+            msg="dataform.json is deprecated and cannot sit next to workflow_settings.yaml",
+        )
 
     def test_package_json_pins_dataform_core(self):
         pkg = json.loads(read("dataform/package.json"))
