@@ -524,7 +524,7 @@ projects/YOUR_PROJECT_ID/locations/asia-northeast1/repositories/fraud-pipeline-r
 2. 画面上部のコンパイル状態が成功であること
 3. **コンパイル済みグラフ** タブで DAG が出ること（エラー文言ではなくグラフ）
 
-失敗しやすい例: `dataform.json` の `defaultDatabase` が実プロジェクトと違う、Git 先が `credit_detect` 本体で `definitions/` がネストしている。
+失敗しやすい例: `dataform.json` の `defaultDatabase` が実プロジェクトと違う、Git 先が `credit_detect` 本体で `definitions/` がネストしている、`package.json` が無く `Can't find package.json` になる。ルートに `package.json`（`@dataform/core`）があること。初回はファイルを開いて **パッケージをインストール** する。
 
 ### タグ `initial_setup` を実行する
 

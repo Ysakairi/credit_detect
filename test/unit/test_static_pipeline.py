@@ -106,6 +106,10 @@ class DataformSqlTest(unittest.TestCase):
         self.assertEqual(dataform_json["defaultSchema"], dataset)
         self.assertEqual(dataform_json["defaultLocation"], "asia-northeast1")
 
+    def test_package_json_pins_dataform_core(self):
+        pkg = json.loads(read("dataform/package.json"))
+        self.assertEqual(pkg["dependencies"]["@dataform/core"], "3.0.0")
+
 
 class WorkflowTerraformTest(unittest.TestCase):
     def setUp(self):
