@@ -66,7 +66,8 @@ main:
             next: check_job_poll_limit
           - condition: $${job_status.status.conditions[0].status == "True"}
             next: reset_poll_for_compile
-        raise: '$${"Cloud Run Job failed: " + default(job_status.status.conditions[0].message, "unknown error")}'
+          - condition: true
+            raise: '$${"Cloud Run Job failed: " + default(job_status.status.conditions[0].message, "unknown error")}'
 
     - check_job_poll_limit:
         switch:
