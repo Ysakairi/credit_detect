@@ -9,7 +9,7 @@ from pathlib import Path
 from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT / "batch_app"))
+sys.path.append(str(ROOT / "batch_app"))
 
 import copy_public_source  # noqa: E402
 import daily_insert  # noqa: E402
