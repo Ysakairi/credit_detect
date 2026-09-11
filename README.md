@@ -210,6 +210,8 @@ Terraform は **AR リポジトリを作りません。** Job が参照するイ
 
 `asia-northeast1-docker.pkg.dev/YOUR_PROJECT_ID/my-repo/daily-ingest:latest`
 
+`YOUR_PROJECT_ID` は ① で `gcloud config set project` した値です。プレースホルダのまま submit しないでください。
+
 コンソール:
 
 1. **API とサービス** で `Artifact Registry API` と `Cloud Build API` を有効化
@@ -220,8 +222,29 @@ Terraform は **AR リポジトリを作りません。** Job が参照するイ
 
 プッシュは WSL または Cloud Shell から行います。Dockerfile は **`batch_app/`** にあります。リポジトリ直下で `gcloud builds submit` すると失敗します。
 
+2024 年以降、新しいプロジェクトの Cloud Build はレガシーの `@cloudbuild.gserviceaccount.com` ではなく **Compute Engine デフォルト SA**（`PROJECT_NUMBER-compute@developer.gserviceaccount.com`）でビルドします。この SA にソース読み取り権限が無いと、アップロード直後に次で落ちます。
+
+`...-compute@developer.gserviceaccount.com does not have storage.objects.get access to the Google Cloud Storage object`
+
 ```bash
+PROJECT_ID="$(gcloud config get-value project)"
+PROJECT_NUMBER="$(gcloud projects describe "${PROJECT_ID}" --format='value(projectNumber)')"
+COMPUTE_SA="${PROJECT_NUMBER}-compute@developer.gserviceaccount.com"
+
 gcloud services enable artifactregistry.googleapis.com cloudbuild.googleapis.com
+
+# Cloud Build 実行 SA（Compute デフォルト）へ、ソース取得・ログ・イメージ push に必要な権限
+gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
+  --member="serviceAccount:${COMPUTE_SA}" \
+  --role="roles/storage.objectViewer"
+
+gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
+  --member="serviceAccount:${COMPUTE_SA}" \
+  --role="roles/logging.logWriter"
+
+gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
+  --member="serviceAccount:${COMPUTE_SA}" \
+  --role="roles/artifactregistry.writer"
 
 # コンソールで未作成なら
 gcloud artifacts repositories create my-repo \
@@ -229,16 +252,20 @@ gcloud artifacts repositories create my-repo \
   --location=asia-northeast1 \
   --description="Repository for fraud detection pipeline"
 
+# IAM 反映待ち（直後の submit がまだ 403 なら数十秒置いて再実行）
 cd batch_app
-gcloud builds submit --tag asia-northeast1-docker.pkg.dev/YOUR_PROJECT_ID/my-repo/daily-ingest:latest
+gcloud builds submit --tag "asia-northeast1-docker.pkg.dev/${PROJECT_ID}/my-repo/daily-ingest:latest"
 cd ..
 ```
+
+手順 ② で作った `.venv` が `batch_app/` に残っていると、ビルドコンテキストが数百 MB になります。submit 前に消すか、ディレクトリの外へ移してください。`.venv` はイメージに不要です。
 
 確認:
 
 ```bash
+PROJECT_ID="$(gcloud config get-value project)"
 gcloud artifacts docker images list \
-  asia-northeast1-docker.pkg.dev/YOUR_PROJECT_ID/my-repo \
+  "asia-northeast1-docker.pkg.dev/${PROJECT_ID}/my-repo" \
   --include-tags
 ```
 
@@ -415,6 +442,8 @@ gcloud run jobs execute daily-ingest-job --region=asia-northeast1 --wait
 
 失敗しやすい点:
 
+- Cloud Build が `storage.objects.get` で 403 → Compute デフォルト SA に ③ の IAM が未付与
+- `--tag` のプロジェクト ID がプレースホルダのまま → ① の `gcloud config` と一致させる
 - ⑦より先に Workflows を回す → モデルなしで `ML.PREDICT` 失敗
 - Dataform が `credit_detect` 本体を向いている → sqlx がコンパイルされない
 - イメージ未プッシュ → Job が Image not found
@@ -429,7 +458,7 @@ gcloud run jobs execute daily-ingest-job --region=asia-northeast1 --wait
 | --- | --- |
 | ① clone | `main` を取る |
 | ② 単体テスト | `evaluate/` と `batch_app/` の 2 系統 |
-| ③ AR 登録 | コンソールで repo 作成 + **`batch_app/` から** Cloud Build |
+| ③ AR 登録 | Compute デフォルト SA に Storage / Logging / AR 権限 + **`batch_app/` から** Cloud Build |
 | ④ プロジェクト情報 | **`terraform.tfvars`。`main.tf` は触らない** |
 | ⑤ terraform | Scheduler が即時有効 |
 | ⑥ Dataform Git |接続先は `credit_detect_dataform`。Secret の IAM は手動 |
