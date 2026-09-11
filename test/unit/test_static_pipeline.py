@@ -116,9 +116,9 @@ class WorkflowTerraformTest(unittest.TestCase):
 
     def test_templatefile_escapes_workflow_expressions(self):
         self.assertIn("$${job_execution.metadata.name}", self.workflow)
-        self.assertIn("$${compilation_result.name}", self.workflow)
-        self.assertIn("$${compilation_status.name}", self.workflow)
-        self.assertIn("$${invocation_result.name}", self.workflow)
+        self.assertIn("compilation_result.body.name", self.workflow)
+        self.assertIn("$${compilation_status.body.name}", self.workflow)
+        self.assertIn("invocation_result.body.name", self.workflow)
         self.assertNotRegex(self.workflow, r"(?<!\$)\$\{compilation_result")
         self.assertNotRegex(self.workflow, r"(?<!\$)\$\{job_execution")
         self.assertNotRegex(self.workflow, r"(?<!\$)\$\{invocation_")
@@ -159,9 +159,15 @@ class WorkflowTerraformTest(unittest.TestCase):
         self.assertIn("max_polls: 60", self.workflow)
         self.assertIn("Timed out waiting for Cloud Run Job to complete", self.workflow)
 
-    def test_dataform_async_wait(self):
-        self.assertIn('compilation_status.state == "SUCCEEDED"', self.workflow)
-        self.assertIn('invocation_status.state == "SUCCEEDED"', self.workflow)
+    def test_dataform_uses_http_v1_not_missing_connector(self):
+        """Workflows に Dataform コネクタは無い。公式は dataform.googleapis.com/v1 + OAuth2。"""
+        self.assertNotIn("googleapis.dataform", self.workflow)
+        self.assertIn("https://dataform.googleapis.com/v1/", self.workflow)
+        self.assertIn("type: OAuth2", self.workflow)
+        self.assertIn("/compilationResults", self.workflow)
+        self.assertIn("/workflowInvocations", self.workflow)
+        self.assertIn('compilation_status.body.state == "SUCCEEDED"', self.workflow)
+        self.assertIn('invocation_status.body.state == "SUCCEEDED"', self.workflow)
         self.assertIn("FAILED", self.workflow)
 
     def test_daily_batch_tag_only(self):

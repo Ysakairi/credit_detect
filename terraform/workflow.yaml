@@ -26,8 +26,8 @@ main:
             name: namespaces/${project_id}/jobs/daily-ingest-job
             location: ${region}
           result: job_execution
-        # 起動 API の 429/5xx のみ再試行。Job 本体の失敗は下の status 判定で扱う
-        #（成功した実行を二重起動しない）。backoff はコネクタの既定に近い 2s→32s。
+        # 起動 API の 429/502/503/504 のみ再試行（http.default_retry_predicate）。
+        # Job 本体の失敗は下の status 判定で扱う（成功した実行を二重起動しない）。
         retry:
           predicate: $${http.default_retry_predicate}
           max_retries: 5
@@ -82,9 +82,11 @@ main:
 
     - compile_dataform:
         try:
-          call: googleapis.dataform.v1beta1.projects.locations.repositories.compilationResults.create
+          call: http.post
           args:
-            parent: $${dataform_parent}
+            url: $${"https://dataform.googleapis.com/v1/" + dataform_parent + "/compilationResults"}
+            auth:
+              type: OAuth2
             body:
               gitCommitish: "main"
           result: compilation_result
@@ -107,9 +109,11 @@ main:
 
     - get_compilation:
         try:
-          call: googleapis.dataform.v1beta1.projects.locations.repositories.compilationResults.get
+          call: http.get
           args:
-            name: $${compilation_result.name}
+            url: $${"https://dataform.googleapis.com/v1/" + compilation_result.body.name}
+            auth:
+              type: OAuth2
           result: compilation_status
         retry:
           predicate: $${http.default_retry_predicate}
@@ -121,10 +125,10 @@ main:
 
     - check_compilation:
         switch:
-          - condition: $${compilation_status.state == "SUCCEEDED"}
+          - condition: $${compilation_status.body.state == "SUCCEEDED"}
             next: reset_poll_for_invoke
-          - condition: $${compilation_status.state == "FAILED" or compilation_status.state == "CANCELLED"}
-            raise: '$${"Dataform compilation failed: " + default(compilation_status.errorStatus.message, compilation_status.state)}'
+          - condition: $${compilation_status.body.state == "FAILED" or compilation_status.body.state == "CANCELLED"}
+            raise: '$${"Dataform compilation failed: " + default(compilation_status.body.errorStatus.message, compilation_status.body.state)}'
           - condition: $${poll_count >= max_polls}
             raise: "Timed out waiting for Dataform compilation"
         next: wait_for_compilation
@@ -136,11 +140,13 @@ main:
 
     - execute_dataform:
         try:
-          call: googleapis.dataform.v1beta1.projects.locations.repositories.workflowInvocations.create
+          call: http.post
           args:
-            parent: $${dataform_parent}
+            url: $${"https://dataform.googleapis.com/v1/" + dataform_parent + "/workflowInvocations"}
+            auth:
+              type: OAuth2
             body:
-              compilationResult: $${compilation_status.name}
+              compilationResult: $${compilation_status.body.name}
               invocationConfig:
                 includedTags:
                   - "daily_batch"
@@ -165,9 +171,11 @@ main:
 
     - get_invocation:
         try:
-          call: googleapis.dataform.v1beta1.projects.locations.repositories.workflowInvocations.get
+          call: http.get
           args:
-            name: $${invocation_result.name}
+            url: $${"https://dataform.googleapis.com/v1/" + invocation_result.body.name}
+            auth:
+              type: OAuth2
           result: invocation_status
         retry:
           predicate: $${http.default_retry_predicate}
@@ -179,13 +187,13 @@ main:
 
     - check_invocation:
         switch:
-          - condition: $${invocation_status.state == "SUCCEEDED"}
+          - condition: $${invocation_status.body.state == "SUCCEEDED"}
             next: return_result
-          - condition: $${invocation_status.state == "FAILED" or invocation_status.state == "CANCELLED"}
-            raise: '$${"Dataform invocation failed: " + invocation_status.state}'
+          - condition: $${invocation_status.body.state == "FAILED" or invocation_status.body.state == "CANCELLED"}
+            raise: '$${"Dataform invocation failed: " + invocation_status.body.state}'
           - condition: $${poll_count >= max_polls}
             raise: "Timed out waiting for Dataform invocation"
         next: wait_for_invocation
 
     - return_result:
-        return: $${invocation_status}
+        return: $${invocation_status.body}
