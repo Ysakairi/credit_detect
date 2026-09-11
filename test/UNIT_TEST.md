@@ -98,7 +98,7 @@ Google Cloud へ `main` をデプロイする前に、Cloud Run Job・評価カ�
 | UT-TF-04 | Dataform 非同期待ち | compile / invoke | `SUCCEEDED` まで待機。FAILED で raise | 同上 |
 | UT-TF-05 | 日次タグのみ | `execute_dataform` | `includedTags: daily_batch`。`initial_setup` を日次で回さない | 同上 |
 | UT-TF-06 | gitCommitish | compile body | `"main"` | 同上 |
-| UT-TF-07 | 一時障害リトライ | GCP API ステップ | `retry.transient_errors` | 同上 |
+| UT-TF-07 | 一時障害リトライ | GCP API ステップ | `http.default_retry_predicate`（Workflows 組み込み。`retry.transient_errors` は未定義） | 同上 |
 | UT-TF-08 | Dataform リポジトリ定義 | `main.tf` | `google_dataform_repository` が存在する | 同上 |
 | UT-TF-09 | Run Jobs IAM | `main.tf` | dataset `dataEditor` + project `jobUser` | 同上 |
 | UT-TF-10 | Scheduler SA 分離 | `main.tf` | `sa-scheduler-trigger` と `workflows.invoker` | 同上 |
