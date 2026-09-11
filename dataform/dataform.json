@@ -1,6 +1,0 @@
-{
-    "defaultDatabase": "skir_sample_credit",
-    "defaultSchema": "dwh_prod",
-    "warehouse": "bigquery",
-    "defaultLocation": "asia-northeast1"
-  }

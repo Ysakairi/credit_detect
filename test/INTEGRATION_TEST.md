@@ -50,7 +50,7 @@
 | IT-ENV-07 | Workflows | `fraud-detection-pipeline` | 存在し SA が付いている | 同上 |
 | IT-ENV-08 | Cloud Scheduler | `daily-fraud-pipeline-trigger` | `0 2 * * *`、`Asia/Tokyo` | 同上 |
 | IT-ENV-09 | Dataform リポジトリ | `fraud-pipeline-repo` | リージョン内に存在 | 同上 |
-| IT-ENV-10 | Dataform と TF のプロジェクト一致 | `dataform.json` の defaultDatabase と `GCP_PROJECT_ID` | 一致。不一致は FAIL（書き込み先ずれ） | 同上 |
+| IT-ENV-10 | Dataform と TF のプロジェクト一致 | `workflow_settings.yaml` の `defaultProject` と `GCP_PROJECT_ID` | 一致。不一致は FAIL（書き込み先ずれ） | 同上 |
 
 ### 4.2 IAM 結合
 

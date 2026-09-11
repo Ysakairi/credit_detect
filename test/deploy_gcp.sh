@@ -68,7 +68,7 @@ terraform -chdir="$TF_DIR" apply -input=false -auto-approve \
 echo
 echo "デプロイ完了。"
 echo "次の手順:"
-echo "  1. dataform.json / workflow_settings.yaml の defaultProject を ${PROJECT_ID} と一致させる"
+echo "  1. workflow_settings.yaml の defaultProject を ${PROJECT_ID} と一致させる（dataform.json は置かない）"
 echo "  2. Dataform を GitHub 連携している場合は compilation が gitCommitish=main を取れること"
 echo "  3. 初回のみ Dataform タグ initial_setup を実行して BQML モデルを作成する"
 echo "  4. ./test/run_integration_tests.sh で結合試験"

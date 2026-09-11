@@ -145,7 +145,7 @@
 | GitHub | `credit_detect`（アプリ / IaC）と、Dataform 用の **ルート配置リポジトリ**（例: `credit_detect_dataform`） |
 | PAT | Dataform が GitHub HTTPS で読む／書くなら PAT。Secret Manager に入れ、Dataform SA へ `secretAccessor` を付ける |
 
-Dataform は **リポジトリ直下の `definitions/` しかコンパイルしません。** この `credit_detect` の sqlx は `dataform/definitions/` にあるため、Git 連携先を本リポジトリの `main` にすると日次も初回も失敗します。連携先は sqlx をルートに置いた `credit_detect_dataform` 側にしてください。`dataform.json` / `workflow_settings.yaml` のプロジェクト ID も、実プロジェクト（既定は `skir_sample_credit`）と一致させる必要があります。
+Dataform は **リポジトリ直下の `definitions/` しかコンパイルしません。** この `credit_detect` の sqlx は `dataform/definitions/` にあるため、Git 連携先を本リポジトリの `main` にすると日次も初回も失敗します。連携先は sqlx をルートに置いた `credit_detect_dataform` 側にしてください。`workflow_settings.yaml` の `defaultProject` も、実プロジェクト（既定は `skir_sample_credit`）と一致させる必要があります。Dataform core 3.0 では `dataform.json` は廃止で、`workflow_settings.yaml` と同時に置くとコンパイルが失敗します。
 
 README にある「terraform apply と初期投入を一括するシェル」は **リポジトリに存在しません。** 手動で進めます。
 
@@ -168,7 +168,7 @@ gcloud config set compute/region asia-northeast1
 gcloud config get-value project
 ```
 
-`YOUR_PROJECT_ID` は以降すべて同じ値にします。`dataform.json` の `defaultDatabase` も同じ ID である必要があります。
+`YOUR_PROJECT_ID` は以降すべて同じ値にします。`workflow_settings.yaml` の `defaultProject` も同じ ID である必要があります。
 
 ---
 
@@ -475,12 +475,12 @@ URL にユーザー名や PAT を含めない。末尾は `.git`。
 
 接続後、コンパイルが通り `definitions/` の sqlx が見えることを確認します。`Dataform doesn't compile .sqlx files outside the definitions/ folder` と出るなら、まだネストした `credit_detect` を向いています。
 
-`dataform.json`:
+`workflow_settings.yaml`（`dataform.json` は置かない）:
 
-```json
-"defaultDatabase": "YOUR_PROJECT_ID",
-"defaultSchema": "dwh_prod",
-"defaultLocation": "asia-northeast1"
+```yaml
+defaultProject: YOUR_PROJECT_ID
+defaultDataset: dwh_prod
+defaultLocation: asia-northeast1
 ```
 
 ---
@@ -524,7 +524,7 @@ projects/YOUR_PROJECT_ID/locations/asia-northeast1/repositories/fraud-pipeline-r
 2. 画面上部のコンパイル状態が成功であること
 3. **コンパイル済みグラフ** タブで DAG が出ること（エラー文言ではなくグラフ）
 
-失敗しやすい例: `dataform.json` の `defaultDatabase` が実プロジェクトと違う、Git 先が `credit_detect` 本体で `definitions/` がネストしている。
+失敗しやすい例: `workflow_settings.yaml` の `defaultProject` が実プロジェクトと違う、Git 先が `credit_detect` 本体で `definitions/` がネストしている、`package.json` が無く `Can't find package.json` になる、`dataform.json` が残っていて `has been deprecated and cannot be defined alongside workflow_settings.yaml` になる。ルートに `package.json`（`@dataform/core`）があり、`dataform.json` が無いこと。初回はファイルを開いて **パッケージをインストール** する。
 
 ### タグ `initial_setup` を実行する
 
@@ -610,7 +610,8 @@ gcloud run jobs execute daily-ingest-job --region=asia-northeast1 --wait
 - ⑦より先に Workflows を回す → モデルなしで `ML.PREDICT` 失敗
 - Dataform が `credit_detect` 本体を向いている → sqlx がコンパイルされない
 - イメージ未プッシュ → Job が Image not found
-- `dataform.json` のプロジェクトが違う → 別プロジェクトに表が立つ / 権限エラー
+- `workflow_settings.yaml` の `defaultProject` が違う → 別プロジェクトに表が立つ / 権限エラー
+- `dataform.json` が `workflow_settings.yaml` と同居 → Dataform core 3.0 でコンパイル失敗（deprecated）
 - 空スライス（`TARGET_DATE` が 32–50 など）→ Job は TRUNCATE を拒否して失敗。Scheduler の既定は JST のカレンダー日なので通常 1–31
 
 ---

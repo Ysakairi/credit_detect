@@ -40,7 +40,7 @@ export GCP_PROJECT_ID="your-gcp-project-id"
 この作業環境には `gcloud` / Terraform / ADC が無く、プロジェクトへの認証情報も注入されていない。そのため **このエージェント実行中に `main` を GCP へ apply することはできない**。課金プロジェクトで次を実行する。
 
 ```bash
-export GCP_PROJECT_ID="skir_sample_credit"   # dataform.json と一致させる
+export GCP_PROJECT_ID="skir_sample_credit"   # workflow_settings.yaml の defaultProject と一致させる
 gcloud auth application-default login
 ./test/deploy_gcp.sh
 ./test/run_integration_tests.sh

@@ -86,7 +86,9 @@ Google Cloud へ `main` をデプロイする前に、Cloud Run Job・評価カ�
 | UT-DF-11 | 不均衡対策 | モデル OPTIONS | `AUTO_CLASS_WEIGHTS = TRUE` | 同上 |
 | UT-DF-12 | 監査変数 | `includes/features.js` | `V14`, `V17`, `V12` | 同上 |
 | UT-DF-13 | Batch は declaration | `ulb_fraud_detection_Batch.sqlx` | `type: "declaration"` | 同上 |
-| UT-DF-14 | プロジェクト ID の一貫 | `dataform.json` と `workflow_settings.yaml` | 同一 `defaultDatabase` / `defaultProject` | 同上 |
+| UT-DF-14 | プロジェクト設定 | `workflow_settings.yaml` | `defaultProject` あり、`defaultDataset=dwh_prod`、`defaultLocation=asia-northeast1` | 同上 |
+| UT-DF-15 | Dataform core | `package.json` | `@dataform/core` がピンされている | 同上 |
+| UT-DF-16 | 旧設定ファイル不在 | `dataform.json` | Dataform core 3.0 では `workflow_settings.yaml` と併用できないためファイルが無い | 同上 |
 
 ### 4.4 Workflows / Terraform / Dockerfile（静的）
 
