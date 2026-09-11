@@ -170,8 +170,11 @@ class WorkflowTerraformTest(unittest.TestCase):
         self.assertIn('gitCommitish: "main"', self.workflow)
 
     def test_transient_retries(self):
-        self.assertIn("retry.transient_errors", self.workflow)
-        self.assertGreaterEqual(self.workflow.count("retry.transient_errors"), 3)
+        self.assertIn("$${http.default_retry_predicate}", self.workflow)
+        self.assertGreaterEqual(self.workflow.count("$${http.default_retry_predicate}"), 3)
+        self.assertNotIn("retry.transient_errors", self.workflow)
+        self.assertIn("initial_delay:", self.workflow)
+        self.assertIn("max_delay:", self.workflow)
 
     def test_dataform_repository_resource(self):
         self.assertIn("google_dataform_repository", self.tf)

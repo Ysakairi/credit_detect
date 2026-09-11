@@ -29,11 +29,11 @@ main:
         # 起動 API の 429/5xx のみ再試行。Job 本体の失敗は下の status 判定で扱う
         #（成功した実行を二重起動しない）。backoff はコネクタの既定に近い 2s→32s。
         retry:
-          predicate: $${retry.transient_errors}
+          predicate: $${http.default_retry_predicate}
           max_retries: 5
           backoff:
-            initial: 2
-            max_interval: 32
+            initial_delay: 2
+            max_delay: 32
             multiplier: 2
 
     - wait_for_job:
@@ -53,11 +53,11 @@ main:
             location: ${region}
           result: job_status
         retry:
-          predicate: $${retry.transient_errors}
+          predicate: $${http.default_retry_predicate}
           max_retries: 5
           backoff:
-            initial: 1
-            max_interval: 16
+            initial_delay: 1
+            max_delay: 16
             multiplier: 2
 
     - check_job_status:
@@ -89,11 +89,11 @@ main:
               gitCommitish: "main"
           result: compilation_result
         retry:
-          predicate: $${retry.transient_errors}
+          predicate: $${http.default_retry_predicate}
           max_retries: 5
           backoff:
-            initial: 2
-            max_interval: 32
+            initial_delay: 2
+            max_delay: 32
             multiplier: 2
 
     - wait_for_compilation:
@@ -112,11 +112,11 @@ main:
             name: $${compilation_result.name}
           result: compilation_status
         retry:
-          predicate: $${retry.transient_errors}
+          predicate: $${http.default_retry_predicate}
           max_retries: 5
           backoff:
-            initial: 1
-            max_interval: 16
+            initial_delay: 1
+            max_delay: 16
             multiplier: 2
 
     - check_compilation:
@@ -147,11 +147,11 @@ main:
                 transitiveDependenciesIncluded: true
           result: invocation_result
         retry:
-          predicate: $${retry.transient_errors}
+          predicate: $${http.default_retry_predicate}
           max_retries: 5
           backoff:
-            initial: 2
-            max_interval: 32
+            initial_delay: 2
+            max_delay: 32
             multiplier: 2
 
     - wait_for_invocation:
@@ -170,11 +170,11 @@ main:
             name: $${invocation_result.name}
           result: invocation_status
         retry:
-          predicate: $${retry.transient_errors}
+          predicate: $${http.default_retry_predicate}
           max_retries: 5
           backoff:
-            initial: 1
-            max_interval: 16
+            initial_delay: 1
+            max_delay: 16
             multiplier: 2
 
     - check_invocation:
