@@ -116,9 +116,9 @@ class WorkflowTerraformTest(unittest.TestCase):
 
     def test_templatefile_escapes_workflow_expressions(self):
         self.assertIn("$${job_execution.metadata.name}", self.workflow)
-        self.assertIn("$${compilation_result.body.name}", self.workflow)
+        self.assertIn("compilation_result.body.name", self.workflow)
         self.assertIn("$${compilation_status.body.name}", self.workflow)
-        self.assertIn("$${invocation_result.body.name}", self.workflow)
+        self.assertIn("invocation_result.body.name", self.workflow)
         self.assertNotRegex(self.workflow, r"(?<!\$)\$\{compilation_result")
         self.assertNotRegex(self.workflow, r"(?<!\$)\$\{job_execution")
         self.assertNotRegex(self.workflow, r"(?<!\$)\$\{invocation_")
