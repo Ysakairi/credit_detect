@@ -19,7 +19,7 @@
 リポジトリルートから:
 
 ```bash
-# 単体試験（GCP 不要）
+# 単体試験（GCP 不要。Debian/Ubuntu では test/.venv を自動作成して pip する）
 ./test/run_unit_tests.sh
 
 # GCP デプロイ（要 gcloud / Terraform / 課金プロジェクト）

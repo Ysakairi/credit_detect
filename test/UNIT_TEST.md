@@ -19,9 +19,10 @@ Google Cloud へ `main` をデプロイする前に、Cloud Run Job・評価カ�
 | --- | --- |
 | OS | Linux |
 | 言語 | Python 3.10 以上（開発環境は 3.12 可） |
-| 依存 | `test/requirements-unit.txt` |
+| 依存 | `test/requirements-unit.txt`（ランナーが `test/.venv` へ入れる） |
+| venv | Debian/Ubuntu 24.04 以降は PEP 668 のためシステム `pip` は使わない。`python3-venv` が必要 |
 | GCP / ADC | 不要 |
-| ネットワーク | 不要（公開データセットへの実クエリは行わない） |
+| ネットワーク | 初回のみ pip で依存取得。公開データセットへの実クエリは行わない |
 
 ## 3. 合否判定
 
@@ -111,8 +112,15 @@ Google Cloud へ `main` をデプロイする前に、Cloud Run Job・評価カ�
 ## 5. 実施手順
 
 ```bash
+# test/ 配下からでも、リポジトリルートからでも可
+./run_unit_tests.sh
+# または
 ./test/run_unit_tests.sh
 ```
+
+- 未指定時は `test/.venv` を自動作成し、その Python で `pip install` と試験を実行する。
+- 既存の仮想環境を使う場合: `PYTHON=/path/to/venv/bin/python ./run_unit_tests.sh`
+- `python3 -m venv` が失敗したら `sudo apt install python3-venv python3.12-venv python3-full`
 
 結果ファイル: `test/results/unit_latest.txt`
 
