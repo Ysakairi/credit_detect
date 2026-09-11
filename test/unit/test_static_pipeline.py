@@ -142,6 +142,14 @@ class WorkflowTerraformTest(unittest.TestCase):
             if stripped.startswith("raise: $${"):
                 self.fail(f"raise 式は YAML 単引用符で囲む: {stripped}")
 
+    def test_check_job_status_is_switch_only(self):
+        """Workflows は 1 ステップを switch と raise の両方にできない。失敗は switch 枝で raise する。"""
+        self.assertNotRegex(
+            self.workflow,
+            r"- check_job_status:\n(?:.*\n)*?        switch:\n(?:.*\n)*?        raise:",
+        )
+        self.assertIn("            raise: '$${\"Cloud Run Job failed: \"", self.workflow)
+
     def test_job_has_location(self):
         self.assertIn("location: ${region}", self.workflow)
         self.assertIn("namespaces/${project_id}/jobs/daily-ingest-job", self.workflow)
