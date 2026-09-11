@@ -53,6 +53,7 @@ Google Cloud へ `main` をデプロイする前に、Cloud Run Job・評価カ�
 | UT-ING-16 | DESTINATION_TABLE 必須 | テーブル未設定 | `RuntimeError` | 同上 |
 | UT-ING-17 | 抽出 SQL のタイブレーク | ソースのクエリ文字列 | `ORDER BY Time, Amount, V1` と `PSEUDO_DAY_COUNT=50` | `unit/test_static_pipeline.py` |
 | UT-ING-18 | WRITE_TRUNCATE の指定 | `load_daily_slice` の JobConfig | `WRITE_TRUNCATE` | `unit/test_daily_insert.py` |
+| UT-ING-19 | 公開表コピーは US Query | `copy_public_source.py` | 抽出 `location=US`、宛先 `dwh_prod.ulb_fraud_detection_public` | `unit/test_copy_public_source.py` |
 
 ### 4.2 SOP 評価カーネル（`evaluate/evaluate_feature.py`）
 
@@ -89,6 +90,7 @@ Google Cloud へ `main` をデプロイする前に、Cloud Run Job・評価カ�
 | UT-DF-14 | プロジェクト設定 | `workflow_settings.yaml` | `defaultProject` あり、`defaultDataset=dwh_prod`、`defaultLocation=asia-northeast1` | 同上 |
 | UT-DF-15 | Dataform core | `package.json` | `@dataform/core` がピンされている | 同上 |
 | UT-DF-16 | 旧設定ファイル不在 | `dataform.json` | Dataform core 3.0 では `workflow_settings.yaml` と併用できないためファイルが無い | 同上 |
+| UT-DF-17 | 公開データのローカルコピー | `ulb_fraud_detection_public.sqlx` | `type: "declaration"`。`initial_converted` は `bigquery-public-data` を直接参照しない | 同上 |
 
 ### 4.4 Workflows / Terraform / Dockerfile（静的）
 
@@ -105,7 +107,7 @@ Google Cloud へ `main` をデプロイする前に、Cloud Run Job・評価カ�
 | UT-TF-09 | Run Jobs IAM | `main.tf` | dataset `dataEditor` + project `jobUser` | 同上 |
 | UT-TF-10 | Scheduler SA 分離 | `main.tf` | `sa-scheduler-trigger` と `workflows.invoker` | 同上 |
 | UT-TF-11 | Job ポーリング権限 | `main.tf` | Job に `roles/run.developer` | 同上 |
-| UT-TF-12 | Dataform SA の BQ 権限 | `main.tf` | サービス ID + dataEditor + jobUser | 同上 |
+| UT-TF-12 | Dataform SA の BQ 権限 | `main.tf` | サービス ID + dataEditor + jobUser + dataViewer | 同上 |
 | UT-TF-13 | Cloud Run timeout / retry | `google_cloud_run_v2_job` | timeout 600s、max_retries 3、memory 1Gi | 同上 |
 | UT-TF-14 | 非 root コンテナ | Dockerfile | `USER appuser` かつ uid 1001 | 同上 |
 | UT-TF-15 | シークレット非埋め込み | アプリソース走査 | サービスアカウントキー JSON や PEM 秘密鍵ヘッダなし | 同上 |

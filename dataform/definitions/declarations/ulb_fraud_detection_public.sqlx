@@ -1,0 +1,6 @@
+config {
+  type: "declaration",
+  schema: "dwh_prod",
+  name: "ulb_fraud_detection_public",
+  description: "Full ULB public table copied into asia-northeast1 by batch_app/copy_public_source.py (README ⑦)"
+}

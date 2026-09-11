@@ -91,6 +91,18 @@ class DataformSqlTest(unittest.TestCase):
         text = read("dataform/definitions/declarations/ulb_fraud_detection_Batch.sqlx")
         self.assertIn('type: "declaration"', text)
 
+    def test_public_copy_is_declaration(self):
+        text = read(
+            "dataform/definitions/declarations/ulb_fraud_detection_public.sqlx"
+        )
+        self.assertIn('type: "declaration"', text)
+        self.assertIn('name: "ulb_fraud_detection_public"', text)
+
+    def test_initial_converted_reads_local_public_copy(self):
+        text = read("dataform/definitions/initial_setup/initial_converted.sqlx")
+        self.assertIn('ref("ulb_fraud_detection_public")', text)
+        self.assertNotIn("bigquery-public-data", text)
+
     def test_audit_features(self):
         text = read("dataform/includes/features.js")
         self.assertIn('"V14"', text)
@@ -213,6 +225,9 @@ class WorkflowTerraformTest(unittest.TestCase):
     def test_dataform_sa_bq_access(self):
         self.assertIn("google_project_service_identity", self.tf)
         self.assertIn('service    = "dataform.googleapis.com"', self.tf)
+        self.assertIn("dataform_bq_job_user", self.tf)
+        self.assertIn("dataform_bq_data_viewer", self.tf)
+        self.assertIn("roles/bigquery.dataViewer", self.tf)
 
     def test_cloud_run_timeout_and_retries(self):
         self.assertIn('timeout         = "600s"', self.tf)
