@@ -157,10 +157,10 @@ resource "google_bigquery_dataset" "dwh_prod" {
 # 3. Cloud Run Jobs
 # ==========================================
 resource "google_cloud_run_v2_job" "daily_ingest" {
-  name                = "daily-ingest-job"
-  location            = var.region
-  deletion_protection = false
-  depends_on          = [google_project_service.apis]
+  name     = "daily-ingest-job"
+  location = var.region
+  # deletion_protection は google provider 6.0 で追加。本構成は ~> 5.0 のため指定しない。
+  depends_on = [google_project_service.apis]
 
   template {
     template {
