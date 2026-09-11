@@ -123,6 +123,25 @@ class WorkflowTerraformTest(unittest.TestCase):
         self.assertNotRegex(self.workflow, r"(?<!\$)\$\{job_execution")
         self.assertNotRegex(self.workflow, r"(?<!\$)\$\{invocation_")
 
+    def test_raise_messages_with_colon_are_yaml_quoted(self):
+        """YAML は未引用の ': ' でスカラーを切る。Workflows の raise 式は単引用符で囲む。"""
+        self.assertIn(
+            """raise: '$${"Cloud Run Job failed: " """,
+            self.workflow,
+        )
+        self.assertIn(
+            """raise: '$${"Dataform compilation failed: " """,
+            self.workflow,
+        )
+        self.assertIn(
+            """raise: '$${"Dataform invocation failed: " """,
+            self.workflow,
+        )
+        for line in self.workflow.splitlines():
+            stripped = line.lstrip()
+            if stripped.startswith("raise: $${"):
+                self.fail(f"raise 式は YAML 単引用符で囲む: {stripped}")
+
     def test_job_has_location(self):
         self.assertIn("location: ${region}", self.workflow)
         self.assertIn("namespaces/${project_id}/jobs/daily-ingest-job", self.workflow)

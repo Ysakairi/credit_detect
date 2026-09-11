@@ -321,7 +321,15 @@ gcloud auth application-default set-quota-project "${PROJECT_ID}"
 # List Project Services に必要。未有効だと上記 403 になる
 gcloud services enable \
   serviceusage.googleapis.com \
-  cloudresourcemanager.googleapis.com
+  cloudresourcemanager.googleapis.com \
+  dataform.googleapis.com
+
+# Dataform の Google 管理 SA を実体化する。未作成だと apply が
+# `service-PROJECT_NUMBER@gcp-sa-dataform.iam.gserviceaccount.com does not exist` で落ちる
+# beta が無い場合: gcloud components install beta
+gcloud beta services identity create \
+  --service=dataform.googleapis.com \
+  --project="${PROJECT_ID}"
 ```
 
 `gcloud services enable` 自体が 403 なら、実行アカウントに Owner または Service Usage Admin がありません。プロジェクト Owner が付与します。
@@ -336,7 +344,7 @@ gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
 確認:
 
 ```bash
-gcloud services list --enabled --filter="config.name:(serviceusage.googleapis.com OR cloudresourcemanager.googleapis.com)"
+gcloud services list --enabled --filter="config.name:(serviceusage.googleapis.com OR cloudresourcemanager.googleapis.com OR dataform.googleapis.com)"
 ```
 
 その後 `terraform/` で:
@@ -482,6 +490,7 @@ gcloud run jobs execute daily-ingest-job --region=asia-northeast1 --wait
 失敗しやすい点:
 
 - terraform apply が `serviceusage.services.list` で 403 → Service Usage / Cloud Resource Manager を gcloud で有効化し、ADC をやり直す
+- terraform apply が Dataform SA `does not exist` → ⑤ の `gcloud beta services identity create --service=dataform.googleapis.com` を実行してから再 apply
 - `--tag` のプロジェクト ID がプレースホルダのまま → ① の `gcloud config` と一致させる
 - ⑦より先に Workflows を回す → モデルなしで `ML.PREDICT` 失敗
 - Dataform が `credit_detect` 本体を向いている → sqlx がコンパイルされない
@@ -499,7 +508,7 @@ gcloud run jobs execute daily-ingest-job --region=asia-northeast1 --wait
 | ② 単体テスト | `evaluate/` と `batch_app/` の 2 系統 |
 | ③ AR 登録 | Compute デフォルト SA に Storage / Logging / AR 権限 + **`batch_app/` から** Cloud Build |
 | ④ プロジェクト情報 | **`terraform.tfvars`。`main.tf` は触らない** |
-| ⑤ terraform | 先に Service Usage / Resource Manager を gcloud で有効化。Scheduler が即時有効 |
+| ⑤ terraform | 先に Service Usage / Resource Manager / Dataform identity を gcloud で用意。Scheduler が即時有効 |
 | ⑥ Dataform Git |接続先は `credit_detect_dataform`。Secret の IAM は手動 |
 | ⑦ 初回 sqlx |タグ `initial_setup` |
 | ⑧ 結合試験 | Workflows を 1 回手動実行 |

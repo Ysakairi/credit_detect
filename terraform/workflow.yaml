@@ -1,5 +1,6 @@
 # Terraform templatefile injects project_id, region, and dataform_repo.
 # Workflows expressions are dollar-dollar-escaped so they survive templatefile.
+# raise のメッセージに ": " が含まれる場合は YAML がそこで切れるため、全体を単引用符で囲む。
 #
 # GCP: Cloud Workflows が Cloud Run Jobs と Dataform を直列起動する。
 # 実行 SA は sa-workflows-orchestrator（run.developer + dataform.editor）。
@@ -65,7 +66,7 @@ main:
             next: check_job_poll_limit
           - condition: $${job_status.status.conditions[0].status == "True"}
             next: reset_poll_for_compile
-        raise: $${"Cloud Run Job failed: " + default(job_status.status.conditions[0].message, "unknown error")}
+        raise: '$${"Cloud Run Job failed: " + default(job_status.status.conditions[0].message, "unknown error")}'
 
     - check_job_poll_limit:
         switch:
@@ -122,7 +123,7 @@ main:
           - condition: $${compilation_status.state == "SUCCEEDED"}
             next: reset_poll_for_invoke
           - condition: $${compilation_status.state == "FAILED" or compilation_status.state == "CANCELLED"}
-            raise: $${"Dataform compilation failed: " + default(compilation_status.errorStatus.message, compilation_status.state)}
+            raise: '$${"Dataform compilation failed: " + default(compilation_status.errorStatus.message, compilation_status.state)}'
           - condition: $${poll_count >= max_polls}
             raise: "Timed out waiting for Dataform compilation"
         next: wait_for_compilation
@@ -180,7 +181,7 @@ main:
           - condition: $${invocation_status.state == "SUCCEEDED"}
             next: return_result
           - condition: $${invocation_status.state == "FAILED" or invocation_status.state == "CANCELLED"}
-            raise: $${"Dataform invocation failed: " + invocation_status.state}
+            raise: '$${"Dataform invocation failed: " + invocation_status.state}'
           - condition: $${poll_count >= max_polls}
             raise: "Timed out waiting for Dataform invocation"
         next: wait_for_invocation
