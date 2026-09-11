@@ -143,7 +143,7 @@
 | 権限 | プロジェクト Owner、または Terraform が SA / IAM / BQ / Run / Workflows / Scheduler / Dataform / Secret Manager を作れること |
 | WSL | `git`, `python3`, `python3-venv`, `gcloud`, `terraform`（1.5+） |
 | GitHub | `credit_detect`（アプリ / IaC）と、Dataform 用の **ルート配置リポジトリ**（例: `credit_detect_dataform`） |
-| PAT | Dataform が private リポジトリを読むなら `contents:read` |
+| PAT | Dataform が GitHub HTTPS で読む／書くなら PAT。Secret Manager に入れ、Dataform SA へ `secretAccessor` を付ける |
 
 Dataform は **リポジトリ直下の `definitions/` しかコンパイルしません。** この `credit_detect` の sqlx は `dataform/definitions/` にあるため、Git 連携先を本リポジトリの `main` にすると日次も初回も失敗します。連携先は sqlx をルートに置いた `credit_detect_dataform` 側にしてください。`dataform.json` / `workflow_settings.yaml` のプロジェクト ID も、実プロジェクト（既定は `skir_sample_credit`）と一致させる必要があります。
 
@@ -387,30 +387,91 @@ gcloud dataform repositories list --region=asia-northeast1
 
 連携先は **sqlx がルートにあるリポジトリ**（`credit_detect_dataform`）です。`credit_detect` 本体ではありません。
 
-**A. Terraform で接続する場合**
+HTTPS で Git 接続する場合、コンソールに PAT を直接貼る欄はありません。**Secret Manager のシークレットが必須**です。未作成だと「シークレットが必要」で進めません。SSH や Developer Connect は本手順では使いません。
 
-1. GitHub PAT を作り、Secret Manager へ
+### 1. GitHub PAT を発行する
+
+1. GitHub → Settings → Developer settings → Personal access tokens
+2. 次のいずれか
+
+**Fine-grained token（推奨）**
+
+- Repository access: Only select repositories → `credit_detect_dataform`
+- Permissions → Repository permissions → **Contents: Read and write**（コンパイルの pull と workspace からの push）
+- Expiration: 運用に合わせて設定
+
+**Classic token**
+
+- スコープ `repo`（private の場合）
+
+SAML SSO を使っている組織なら、発行後に token を Authorize する。値（`ghp_...` または `github_pat_...`）は画面に一度しか出ません。リポジトリにコミットしない。
+
+### 2. Secret Manager にシークレットを作る
+
+名前は `dataform-github-token`。値は PAT の文字列だけ（JSON にしない、前後の改行を付けない）。
+
+**コンソール**
+
+1. セキュリティ → Secret Manager → **シークレットを作成**
+2. 名前: `dataform-github-token`
+3. シークレットの値: PAT を貼る
+4. 作成
+
+Secret Manager API が未有効なら、⑤ の apply 後か次で有効化する。
+
+```bash
+gcloud services enable secretmanager.googleapis.com
+```
+
+**gcloud**
 
 ```bash
 echo -n "ghp_...." | gcloud secrets create dataform-github-token --data-file=-
 ```
 
-2. Dataform サービスエージェントに読み取りを付与（`main.tf` にはこの IAM が無い）
+既存シークレットに PAT を入れ直す場合:
 
 ```bash
-PROJECT_NUMBER=$(gcloud projects describe YOUR_PROJECT_ID --format='value(projectNumber)')
+echo -n "ghp_...." | gcloud secrets versions add dataform-github-token --data-file=-
+```
+
+### 3. Dataform サービスエージェントに読み取りを付与する
+
+`main.tf` にはこの IAM がありません。シークレットを Dataform が読めないと、接続画面のドロップダウンに出てもリンク後に失敗します。
+
+```bash
+PROJECT_ID="$(gcloud config get-value project)"
+PROJECT_NUMBER="$(gcloud projects describe "${PROJECT_ID}" --format='value(projectNumber)')"
 gcloud secrets add-iam-policy-binding dataform-github-token \
   --member="serviceAccount:service-${PROJECT_NUMBER}@gcp-sa-dataform.iam.gserviceaccount.com" \
   --role="roles/secretmanager.secretAccessor"
 ```
 
-3. `terraform.tfvars` に URL と secret を書いて `terraform apply` し直す
+**コンソール**なら Secret Manager → `dataform-github-token` → 権限 → アクセスを許可。プリンシパルに `service-PROJECT_NUMBER@gcp-sa-dataform.iam.gserviceaccount.com`、ロールは **Secret Manager シークレット アクセサー**。
 
-**B. コンソールで接続する場合**
+### A. Terraform で接続する場合
+
+`terraform.tfvars` に URL とシークレット版を書いて `terraform apply` し直す。
+
+```hcl
+dataform_git_url             = "https://github.com/Ysakairi/credit_detect_dataform.git"
+dataform_github_token_secret = "projects/YOUR_PROJECT_ID/secrets/dataform-github-token/versions/latest"
+```
+
+URL にユーザー名や PAT を含めない。末尾は `.git`。
+
+### B. コンソールで接続する場合
 
 1. BigQuery → Dataform → `fraud-pipeline-repo`
-2. Git を接続 → HTTPS URL（`credit_detect_dataform`）と PAT / Secret
-3. デフォルトブランチ `main`
+2. **設定 → Git と接続**（Connect with Git）
+3. プロトコル: **HTTPS**
+4. リモート Git リポジトリ URL: `https://github.com/Ysakairi/credit_detect_dataform.git`  
+   （ユーザー名・パスワードを URL に入れない。末尾 `.git`）
+5. デフォルト ブランチ: `main`
+6. **シークレット:** ドロップダウンで `dataform-github-token` を選ぶ（PAT の直貼りはできない）
+7. リンク
+
+ドロップダウンにシークレットが出ないときは、同一プロジェクトにシークレットがあることと、手順 3 の `secretAccessor` を確認する。
 
 接続後、コンパイルが通り `definitions/` の sqlx が見えることを確認します。`Dataform doesn't compile .sqlx files outside the definitions/ folder` と出るなら、まだネストした `credit_detect` を向いています。
 
@@ -509,6 +570,6 @@ gcloud run jobs execute daily-ingest-job --region=asia-northeast1 --wait
 | ③ AR 登録 | Compute デフォルト SA に Storage / Logging / AR 権限 + **`batch_app/` から** Cloud Build |
 | ④ プロジェクト情報 | **`terraform.tfvars`。`main.tf` は触らない** |
 | ⑤ terraform | 先に Service Usage / Resource Manager / Dataform identity を gcloud で用意。Scheduler が即時有効 |
-| ⑥ Dataform Git |接続先は `credit_detect_dataform`。Secret の IAM は手動 |
+| ⑥ Dataform Git | 接続先は `credit_detect_dataform`。HTTPS は Secret Manager の PAT + Dataform SA の `secretAccessor` |
 | ⑦ 初回 sqlx |タグ `initial_setup` |
 | ⑧ 結合試験 | Workflows を 1 回手動実行 |
