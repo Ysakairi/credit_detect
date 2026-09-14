@@ -1,10 +1,18 @@
 # credit_detect
-# クレジットカード不正監視データパイプライン構築
+
+クレジットカード不正監視データパイプラインと、その推論結果を調査する **Autonomous Fraud Investigation Agent（PoC）** です。
+
+- パイプライン（守り）: Dataform × BQML × Cloud Workflows × Terraform
+- エージェント（攻め）: LangGraph × Vertex AI × BigQuery Vector Search × Cloud Run
+- エージェント仕様の詳細は **[Agent.md](Agent.md)**
+- 評価指標の定義は **[EVALUATE.md](EVALUATE.md)**
 
 # 1. プロジェクト概要
 
 公開されているクレジットカード取引データセットを活用し、日次のデータ取り込みからデータ加工、機械学習モデルによる不正検知、そしてダッシュボードでの可視化までを一貫して行う自動化パイプラインを構築します。
 実運用を想定し、インフラストラクチャはすべてTerraformを用いてコード化（IaC）しています。
+
+その上に、日次推論で付いた異常スコアと自然言語の調査指示を入力に、SQL 生成・規程検索・統計・自己修正・是正 SQL 提案までを自律実行する Agent を PoC として載せます。
 
 # 2. アーキテクチャ
 
@@ -23,6 +31,22 @@
 5. **BigQuery ML** (機械学習モデルの再学習・推論)
 ↓
 6. **Looker Studio** (ダッシュボード可視化)
+↓
+7. **Fraud Investigation Agent**（本 PoC）LangGraph が推論テーブルと規程 RAG を使って調査レポートを返す
+
+```mermaid
+flowchart TD
+  analyst[アナリスト] --> ui[Cloud Run Streamlit]
+  ui --> agent[LangGraph Agent]
+  agent --> gemini[Vertex AI Gemini Flash]
+  agent --> bq[BigQuery dwh_prod]
+  agent --> vs[VECTOR_SEARCH knowledge]
+  bq --> pred[ulb_fraud_detection_predictions]
+  bq --> model[ulb_fraud_detection_model]
+  vs --> manuals[規程 / SOP / アップロード資料]
+  ingest[日次パイプライン] --> pred
+  ingest --> model
+```
 
 ## 各コンポーネントの役割と工夫点
 
@@ -32,6 +56,8 @@
 単なるデータコピーではなく、機械学習の精度を上げるためのデータ加工（取引金額の標準化、時間帯（秒）データのカテゴリ化、Null処理など）をDataform上のSQL（.sqlx）として実装し、GitHubでバージョン管理します。
 - **Workflowsによる制御**
 データ投入から、Dataformの実行、BQMLモデルの更新までの一連の流れを安全に連携させます。
+- **調査 Agent**
+推論確率 `fraud_probability` を自然言語から Text-to-SQL し、SOP の KS / Cliff's Delta で特徴量を評価して監査レポートを出します。詳細は [Agent.md](Agent.md)。
 
 # 3. 使用するデータセットと機械学習モデル
 
@@ -118,6 +144,10 @@
 - **IAM / サービスアカウント**
     
      最小特権の原則に基づき、各サービス（Run Jobs, Workflows, Dataform等）が連携するために必要な権限のみを付与したサービスアカウント。
+
+- **Agent PoC（`terraform/agent.tf`）**
+    
+    Vertex AI API、ステージング GCS、ナレッジテーブル、調査用 SA、任意の Streamlit Cloud Run
     
 
 リポジトリには `terraform apply` と初期データ投入を一括で行うシェルスクリプトを同梱し、第三者が容易に環境を再現できるようにします。
@@ -130,9 +160,9 @@
 
 元データを50分割し、「50日分のバッチデータ」と見立てて抽出し、50日分の擬似的な日次データとして処理します。
 
-# 7. 事前準備
+# 7. 事前準備（日次パイプライン）
 
-**① clone → ② 単体テスト → ③ Artifact Registry / イメージ → ④ tfvars → ⑤ terraform apply → ⑥ Dataform の Git 接続 → ⑦ `initial_setup` → ⑧ 結合試験**
+**① clone → ② 単体テスト → ③ Artifact Registry / イメージ → ④ tfvars → ⑤ terraform apply → ⑥ Dataform の Git 接続 → ⑦ `initial_setup` → ⑧ 結合試験 → ⑨ 調査 Agent（第8節）**
 
 
 ## 事前に揃えるもの
@@ -140,7 +170,7 @@
 | 項目 | 内容 |
 | --- | --- |
 | GCP プロジェクト | 課金有効。リージョンは `asia-northeast1` |
-| 権限 | プロジェクト Owner、または Terraform が SA / IAM / BQ / Run / Workflows / Scheduler / Dataform / Secret Manager を作れること |
+| 権限 | プロジェクト Owner、または Terraform が SA / IAM / BQ / Run / Workflows / Scheduler / Dataform / Secret Manager / Vertex AI を作れること |
 | WSL | `git`, `python3`, `python3-venv`, `gcloud`, `terraform`（1.5+） |
 | GitHub | `credit_detect`（アプリ / IaC）と、Dataform 用の **ルート配置リポジトリ**（例: `credit_detect_dataform`） |
 | PAT | Dataform が GitHub HTTPS で読む／書くなら PAT。Secret Manager に入れ、Dataform SA へ `secretAccessor` を付ける |
@@ -200,7 +230,20 @@ deactivate
 cd ..
 ```
 
-どちらも OK になってからイメージを積んでください。失敗したまま ④ に進むと、壊れたコンテナが Artifact Registry に載ります。
+**調査 Agent（PoC）**
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r agent/requirements.txt
+export PYTHONPATH="$(pwd):$(pwd)/evaluate"
+python -m unittest discover -s agent/tests -v
+deactivate
+```
+
+GCP は呼びません（mock バックエンド）。LangGraph と既存の `evaluate/` カーネルを使います。
+
+どれも OK になってからイメージを積んでください。失敗したまま ④ に進むと、壊れたコンテナが Artifact Registry に載ります。
 
 ---
 
@@ -288,6 +331,11 @@ cp example.tfvars terraform.tfvars
 project_id = "YOUR_PROJECT_ID"
 region     = "asia-northeast1"
 repo_docker = "my-repo"
+
+# Autonomous Fraud Investigation Agent (PoC)
+enable_agent             = true
+enable_agent_cloud_run   = false   # イメージ未 push のうちは false
+agent_ui_unauthenticated = false
 
 # Dataform を Terraform で Git 接続する場合（⑥と一体でやるなら）
 # dataform_git_url             = "https://github.com/YOUR_ORG/credit_detect_dataform.git"
@@ -725,10 +773,393 @@ gcloud run jobs execute daily-ingest-job --region=asia-northeast1 --wait
 | 提示 | 注意 |
 | --- | --- |
 | ① clone | `main` を取る |
-| ② 単体テスト | `evaluate/` と `batch_app/` の 2 系統 |
+| ② 単体テスト | `evaluate/`、`batch_app/`、`agent/tests` |
 | ③ AR 登録 | Compute デフォルト SA に Storage / Logging / AR 権限 + **`batch_app/` から** Cloud Build |
 | ④ プロジェクト情報 | **`terraform.tfvars`。`main.tf` は触らない** |
 | ⑤ terraform | 先に Service Usage / Resource Manager / Dataform identity を gcloud で用意。Scheduler が即時有効 |
 | ⑥ Dataform Git | 接続先は `credit_detect_dataform`。HTTPS は Secret Manager の PAT + Dataform SA の `secretAccessor` |
 | ⑦ 初回 sqlx | Dataform SA の BQ IAM + 公開表を `dwh_prod` へコピー。ワークスペース ID `initial-setup` を作成してコンパイル。タグ `initial_setup` |
 | ⑧ 結合試験 | Workflows を 1 回手動実行 |
+| ⑨ 調査 Agent | 第8節。推論テーブルがあること。`enable_agent=true`、Cloud Run はイメージ push 後 |
+
+---
+
+# 8. Autonomous Fraud Investigation Agent の GCP 構築
+
+本節だけ読めば、既存の `dwh_prod` 推論テーブルの上に調査 Agent を東京リージョンへ出せます。仕様の詳細は [Agent.md](Agent.md) です。
+
+PoC では **2 つのデプロイ経路** を用意しています。
+
+| 経路 | 使いどころ | エージェントの実行場所 |
+| --- | --- | --- |
+| **A. Cloud Run 同梱（推奨）** | 最短で画面まで出す | Streamlit コンテナ内の LangGraph |
+| **B. Vertex AI Agent Engine** | 設計メモどおりのマネージド実行 | Reasoning Engine。UI は Cloud Run |
+
+どちらも BigQuery と Gemini は `asia-northeast1`、ナレッジは `dwh_prod.fraud_investigation_knowledge` です。
+
+## 8.1 前提条件
+
+1. 日次パイプラインが一度以上成功し、次が存在すること。
+   - `{PROJECT}.dwh_prod.ulb_fraud_detection_model`
+   - `{PROJECT}.dwh_prod.ulb_fraud_detection_predictions`
+2. 操作する Google アカウントに、対象プロジェクトの Owner または次相当があること。
+   - `roles/aiplatform.admin` または `roles/aiplatform.user`
+   - `roles/bigquery.admin` または jobUser + データセット編集
+   - `roles/run.admin`, `roles/storage.admin`, `roles/iam.serviceAccountUser`
+   - Terraform 用の `roles/resourcemanager.projectIamAdmin`（既存 SA への IAM 追加）
+3. 課金アカウントがリンクされていること。Vertex AI と BigQuery は従量です。
+4. ローカルに `gcloud`、`terraform` >= 1.5、Python 3.11、Docker または Cloud Build。
+
+パイプライン未構築の場合は、先に第7節と `terraform apply`（`enable_agent_cloud_run=false` のまま）でデータセットと Workflows を作り、Dataform の `initial_setup` と `daily_batch` を実行してください。Agent は推論テーブルが空でも mock では動けますが、本番相当の調査には予測行が必要です。
+
+## 8.2 プロジェクトと認証
+
+```bash
+export PROJECT_ID="your-gcp-project-id"
+export REGION="asia-northeast1"
+export DATASET_ID="dwh_prod"
+
+gcloud auth login
+gcloud auth application-default login
+gcloud config set project "${PROJECT_ID}"
+gcloud config set billing/quota_project "${PROJECT_ID}"
+```
+
+Application Default Credentials が Vertex / BigQuery の両方で使われます。組織ポリシーで `iam.disableServiceAccountKeyCreation` が有効でも、ADC と Cloud Run の実行 SA だけで完結する想定です（キーは作りません）。
+
+## 8.3 有効化する API
+
+Terraform（`terraform/main.tf` と `terraform/agent.tf`）が主に有効化します。手動で先に通す場合:
+
+```bash
+gcloud services enable \
+  aiplatform.googleapis.com \
+  bigquery.googleapis.com \
+  storage.googleapis.com \
+  run.googleapis.com \
+  artifactregistry.googleapis.com \
+  cloudbuild.googleapis.com \
+  iam.googleapis.com \
+  cloudresourcemanager.googleapis.com
+```
+
+初回の `aiplatform.googleapis.com` は数分かかることがあります。Agent Engine 用の Google 管理 SA `service-{PROJECT_NUMBER}@gcp-sa-aiplatform-re.iam.gserviceaccount.com` は API 有効化後に自動作成されます。Terraform がその SA へ BQ / GCS 権限を付けます。
+
+## 8.4 Terraform で基盤を作る
+
+日次パイプライン側の `terraform apply` 手順（Service Usage の先行有効化、Dataform identity の実体化）は第7節⑤に従ってください。
+Agent 用リソースは同じ `terraform/` ディレクトリの `agent.tf` が追加します。
+`enable_agent_cloud_run` はイメージ未 push のあいだ `false` のままにします。
+
+```bash
+cd terraform
+cp example.tfvars terraform.tfvars
+# terraform.tfvars を編集:
+#   project_id                 = "your-gcp-project-id"
+#   enable_agent               = true
+#   enable_agent_cloud_run     = false   # イメージ未pushのうちは false
+#   agent_ui_unauthenticated   = false
+
+terraform init
+terraform plan
+terraform apply
+```
+
+作成される Agent 関連リソース:
+
+| リソース | 名前 / ID | 役割 |
+| --- | --- | --- |
+| GCS | `{project_id}-fraud-agent-staging` | Agent Engine のパッケージステージング |
+| SA | `sa-fraud-agent` | Cloud Run UI と Vertex 呼出し |
+| BQ テーブル | `dwh_prod.fraud_investigation_knowledge` | 規程の本文と 768 次元 embedding |
+| IAM | Agent Engine 管理 SA への jobUser / dataEditor / objectAdmin | マネージド実行から BQ と GCS を触るため |
+
+適用後に出力を控えます。
+
+```bash
+terraform output agent_staging_bucket
+terraform output agent_runtime_sa
+terraform output knowledge_table
+```
+
+ステージングバケット URL は次の形です。
+
+```text
+gs://YOUR_PROJECT_ID-fraud-agent-staging
+```
+
+## 8.5 ナレッジ（規程）の初期投入とベクトル化
+
+設計どおり、調査マニュアルは初期状態では未整備です。リポジトリの `knowledge/` に SOP 要約・社内規程ドラフト・カードテスト観点・エスカレーション手順を入れてあるので、それを BigQuery に埋め込みます。
+
+```bash
+cd /path/to/credit_detect
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r agent/requirements.txt
+
+export PROJECT_ID="your-gcp-project-id"
+export LOCATION="asia-northeast1"
+export DATASET_ID="dwh_prod"
+
+# チャンク内容の確認（GCP 不要）
+python scripts/seed_knowledge.py --dry-run
+
+# 本番: text-embedding-004 でベクトル化し、knowledge テーブルへ UPSERT
+python scripts/seed_knowledge.py \
+  --project-id "${PROJECT_ID}" \
+  --source-dir knowledge
+```
+
+追加のマニュアル（例: 正式版の評価手順）も同じテーブルに載せられます。
+
+```bash
+python scripts/seed_knowledge.py \
+  --project-id "${PROJECT_ID}" \
+  --file EVALUATE.md
+```
+
+行数が少ないと `CREATE VECTOR INDEX` は失敗することがあります。スクリプトは警告だけ出して続行します。数十件規模ではインデックス無しの `VECTOR_SEARCH` で十分です。
+
+投入確認:
+
+```bash
+bq query --use_legacy_sql=false --location="${REGION}" "
+SELECT category, COUNT(*) AS n
+FROM \`${PROJECT_ID}.${DATASET_ID}.fraud_investigation_knowledge\`
+GROUP BY category
+"
+```
+
+## 8.6 ローカル動作確認（必須）
+
+GCP を使う前に、グラフが mock で閉じることを確認します。
+
+```bash
+export PYTHONPATH="$(pwd):$(pwd)/evaluate"
+python -m unittest discover -s agent/tests -v
+python -m unittest discover -s evaluate -v
+
+export AGENT_BACKEND=mock
+python scripts/local_query.py --backend mock \
+  --query "不正確率0.85以上かつAmount200ドル以上を調査し遮断SQLを提案して"
+```
+
+JSON に `final_report`・`generated_sql`・`statistical_summary.strong_separators` が入れば成功です。
+
+ADC が通って推論テーブルがある場合は local モードで実データを読めます。
+
+```bash
+export AGENT_BACKEND=local
+export PROJECT_ID="your-gcp-project-id"
+python scripts/local_query.py --backend local
+```
+
+権限エラーのときは、自分のユーザーに `bigquery.jobUser` とデータセット閲覧、および `aiplatform.user` があるか確認してください。サービスアカウントで動かす場合は `sa-fraud-agent` を impersonate します。
+
+```bash
+gcloud iam service-accounts add-iam-policy-binding \
+  sa-fraud-agent@${PROJECT_ID}.iam.gserviceaccount.com \
+  --member="user:YOU@example.com" \
+  --role="roles/iam.serviceAccountTokenCreator"
+
+gcloud auth application-default login --impersonate-service-account \
+  sa-fraud-agent@${PROJECT_ID}.iam.gserviceaccount.com
+```
+
+## 8.7 経路 A: Cloud Run に UI + LangGraph を載せる（推奨 PoC）
+
+Agent Engine を待たずに、アナリスト向け画面とエージェント実行を同じサービスにまとめます。コールドスタートはありますが、`min_instances = 0` のためアイドル課金はほぼゼロです。
+
+### 8.7.1 コンテナを Artifact Registry へ
+
+第7節で `my-repo` が無い場合は先に作成します。**ビルドコンテキストはリポジトリルート**です（`agent/` `evaluate/` `knowledge/` `app/` を同梱するため）。設定ファイルは `cloudbuild.agent.yaml` です。
+
+```bash
+gcloud artifacts repositories create my-repo \
+    --repository-format=docker \
+    --location="${REGION}" \
+    --description="credit_detect images" \
+  || true
+
+gcloud builds submit . --config=cloudbuild.agent.yaml \
+  --substitutions=_IMAGE="${REGION}-docker.pkg.dev/${PROJECT_ID}/my-repo/fraud-agent-ui:latest"
+```
+
+ローカル Docker を使う場合:
+
+```bash
+gcloud auth configure-docker "${REGION}-docker.pkg.dev"
+docker build -f app/Dockerfile \
+  -t "${REGION}-docker.pkg.dev/${PROJECT_ID}/my-repo/fraud-agent-ui:latest" .
+docker push "${REGION}-docker.pkg.dev/${PROJECT_ID}/my-repo/fraud-agent-ui:latest"
+```
+
+### 8.7.2 Cloud Run サービスを Terraform または gcloud で公開
+
+イメージが registry に載ってから:
+
+```hcl
+# terraform.tfvars
+enable_agent_cloud_run   = true
+agent_ui_unauthenticated = false
+```
+
+```bash
+cd terraform && terraform apply
+terraform output agent_ui_uri
+```
+
+または gcloud（Terraform の SA を実行ユーザーにする）:
+
+```bash
+gcloud run deploy fraud-agent-ui \
+  --image="${REGION}-docker.pkg.dev/${PROJECT_ID}/my-repo/fraud-agent-ui:latest" \
+  --region="${REGION}" \
+  --service-account="sa-fraud-agent@${PROJECT_ID}.iam.gserviceaccount.com" \
+  --cpu=1 --memory=1Gi --timeout=300 \
+  --min-instances=0 --max-instances=2 \
+  --set-env-vars="PROJECT_ID=${PROJECT_ID},LOCATION=${REGION},DATASET_ID=${DATASET_ID},AGENT_BACKEND=local,MODEL_NAME=gemini-2.0-flash" \
+  --no-allow-unauthenticated
+```
+
+自分のアカウントに実行権限を付けます。
+
+```bash
+gcloud run services add-iam-policy-binding fraud-agent-ui \
+  --region="${REGION}" \
+  --member="user:YOU@example.com" \
+  --role="roles/run.invoker"
+
+gcloud run services proxy fraud-agent-ui --region="${REGION}" --port=8080
+```
+
+デモで一時的に公開する場合のみ（データが公開データ由来でも、生成 SQL と規程が外に出ます）:
+
+```bash
+gcloud run services add-iam-policy-binding fraud-agent-ui \
+  --region="${REGION}" \
+  --member="allUsers" \
+  --role="roles/run.invoker"
+```
+
+### 8.7.3 画面での確認手順
+
+1. サイドバー **バックエンド** を `local`（Cloud Run 既定）または手元なら `mock`
+2. Project ID / Location / Dataset が `dwh_prod` になっていること
+3. 既定の調査文のまま「自律調査を開始」
+4. 「調査レポート」にエグゼクティブサマリーが出ること
+5. 「実行プロセス」に Plan、`fraud_probability` を含む SELECT、統計の `strong_separators`
+6. 「即時是正SQL」が `SELECT` であり `DELETE` でないこと
+7. 任意: `knowledge/` 以外の `.md` をアップロードし「ベクトル化して登録」後、もう一度調査して「参照規程」に新しい title が出ること
+
+## 8.8 経路 B: Vertex AI Agent Engine（Reasoning Engine）
+
+Cloud Run を UI 専用にし、グラフをマネージド実行する場合です。ステージングバケットと `sa-fraud-agent` の権限は 8.4 で済んでいます。
+
+```bash
+source .venv/bin/activate
+export PROJECT_ID="your-gcp-project-id"
+export LOCATION="asia-northeast1"
+export STAGING_BUCKET="gs://${PROJECT_ID}-fraud-agent-staging"
+export MODEL_NAME="gemini-2.0-flash"
+
+python scripts/deploy_reasoning_engine.py \
+  --project-id "${PROJECT_ID}" \
+  --location "${LOCATION}" \
+  --staging-bucket "${STAGING_BUCKET}" \
+  --model-name "${MODEL_NAME}"
+```
+
+成功すると次のようなリソース名が印字されます。
+
+```text
+projects/PROJECT_NUMBER/locations/asia-northeast1/reasoningEngines/RESOURCE_ID
+```
+
+コンソール確認: Vertex AI → Agent Engine（または Reasoning Engine）→ `fraud-investigation-agent`。
+
+Cloud Run から呼ぶ場合は環境変数を足してリビジョンを出します。
+
+```bash
+gcloud run services update fraud-agent-ui \
+  --region="${REGION}" \
+  --set-env-vars="AGENT_BACKEND=reasoning_engine,REASONING_ENGINE_RESOURCE_NAME=projects/.../reasoningEngines/..."
+```
+
+UI サイドバーのバックエンドを `reasoning_engine` にし、同じリソース名を貼って調査を実行します。
+
+`agent_engines.create` がリージョンや SDK 差で失敗する場合、スクリプトは `vertexai.preview.reasoning_engines.ReasoningEngine.create` にフォールバックします。それでも失敗するときは経路 A を正とし、Issue に SDK バージョンとエラー全文を残してください。
+
+必要な IAM（Terraform 済みの再掲）:
+
+- デプロイするユーザー: `roles/aiplatform.admin`, ステージングバケットへの objectAdmin
+- `service-{NUMBER}@gcp-sa-aiplatform-re.iam.gserviceaccount.com`: `roles/aiplatform.user`, `roles/bigquery.jobUser`, データセット `dataEditor`, ステージング objectAdmin
+- Cloud Run SA `sa-fraud-agent`: `roles/aiplatform.user`（リモート query 用）
+
+## 8.9 Gemini モデル名
+
+設計メモはコスト優先で `gemini-1.5-flash-002` です。2026-09 時点の東京リージョンでは `gemini-2.0-flash` を既定にしています。
+
+```bash
+gcloud alpha ai models list --region="${REGION}" | grep -i gemini
+```
+
+使える Flash 系があれば `MODEL_NAME` と Cloud Run の env を合わせてください。Pro は PoC 予算（月 2 万円）を圧迫しやすいので使わないでください。
+
+## 8.10 コスト監視（FinOps）
+
+1. Billing → 予算 → 月 20,000 JPY、80% でメール
+2. 対象サービス: Vertex AI, BigQuery, Cloud Run, Cloud Storage
+3. エージェントは SELECT に 10GiB billed キャップ、結果 200 行
+4. ナレッジ再埋め込みは差分 UPSERT だが、全文書を頻繁にやり直すと Embedding API が嵩む
+5. Cloud Run `min_instances=0`、Agent Engine もリクエスト課金。検証後はサービスを止める（8.12）
+
+## 8.11 よくある失敗
+
+| 症状 | 対処 |
+| --- | --- |
+| `404` Gemini | `LOCATION` とモデルのリージョン対応を確認。`us-central1` へだけ逃がすのは最終手段（BQ は東京のままクロスリージョン課金） |
+| `Access Denied` VECTOR_SEARCH | `sa-fraud-agent` にデータセット dataEditor / Viewer。テーブルが terraform で出来ているか |
+| `maximumBytesBilled exceeded` | 生成 SQL が公開全表スキャン。プロンプトは `predictions` を優先。必要ならテーブルを `Date` で絞る |
+| SQL が `predicted_Class_probs` を参照 | 推論テーブルにその列は無い。`fraud_probability` を使う。Reflection が再生成する |
+| Cloud Run タイムアウト | `--timeout=300`。それでも足りなければ調査 SQL を狭める |
+| Agent Engine の import エラー | `extra_packages` に `agent` と `evaluate`。経路 A で切り分け |
+| ベクトルインデックス作成失敗 | 行数不足。無視してよい |
+
+## 8.12 破棄
+
+```bash
+# Cloud Run UI
+gcloud run services delete fraud-agent-ui --region="${REGION}" --quiet
+
+# Agent Engine（リソース名はデプロイ時の出力）
+gcloud ai reasoning-engines delete RESOURCE_ID --region="${REGION}" --quiet \
+  || echo "コンソールの Vertex AI > Agent Engine から削除"
+
+cd terraform
+terraform apply -var="enable_agent=false" -var="enable_agent_cloud_run=false"
+# または Agent ごとプロジェクトを検証用にしている場合
+# terraform destroy
+```
+
+ナレッジテーブルだけ消す場合:
+
+```bash
+bq rm -f -t "${PROJECT_ID}:${DATASET_ID}.fraud_investigation_knowledge"
+```
+
+日次パイプライン（Scheduler / Workflows / モデル）は Agent 破棄後も残します。
+
+---
+
+# 9. 開発者向けクイックスタート（画面のみ）
+
+```bash
+pip install -r app/requirements.txt
+export PYTHONPATH="$(pwd):$(pwd)/evaluate"
+export AGENT_BACKEND=mock
+streamlit run app/app.py --server.port=8080
+```
+
+ブラウザで `http://localhost:8080` を開き、第 8.7.3 節と同じ操作をします。

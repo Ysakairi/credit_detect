@@ -26,7 +26,7 @@ Google Cloud へ `main` をデプロイする前に、Cloud Run Job・評価カ�
 
 ## 3. 合否判定
 
-- 本試験書の全項目を `test/unit/` および既存モジュール隣接テストがカバーし、`./test/run_unit_tests.sh` が終了コード 0 であること。
+- 本試験書の全項目を `test/unit/`、`agent/tests`、および既存モジュール隣接テストがカバーし、`./test/run_unit_tests.sh` が終了コード 0 であること。
 - 1 件でも FAIL なら単体試験不合格。デプロイに進まない。
 
 ## 4. 試験項目
@@ -112,6 +112,25 @@ Google Cloud へ `main` をデプロイする前に、Cloud Run Job・評価カ�
 | UT-TF-14 | 非 root コンテナ | Dockerfile | `USER appuser` かつ uid 1001 | 同上 |
 | UT-TF-15 | シークレット非埋め込み | アプリソース走査 | サービスアカウントキー JSON や PEM 秘密鍵ヘッダなし | 同上 |
 | UT-TF-16 | gitignore | `.gitignore` | `*.tfstate` と `*.tfvars`（example は例外） | 同上 |
+| UT-TF-17 | Agent 基盤は opt-in | `terraform/agent.tf` / `example.tfvars` | ナレッジテーブルと `sa-fraud-agent`。`enable_agent` で切替 | 同上 |
+| UT-TF-18 | Cloud Run v2 に deletion_protection 無し | `main.tf` / `agent.tf` | google provider ~> 5.0 では未対応のため未指定 | 同上 |
+| UT-TF-19 | Agent UI 非 root | `app/Dockerfile` | `USER appuser` かつ uid 1001 | 同上 |
+
+### 4.5 調査 Agent（PoC、`agent/`）
+
+GCP は呼ばない。`test/run_unit_tests.sh` が `agent/requirements.txt` を入れたあと `agent/tests` を discover する。
+
+| ID | 試験項目 | 手順 | 期待結果 | スクリプト |
+| --- | --- | --- | --- | --- |
+| UT-AG-01 | mock 調査の完走 | `FraudInvestigationAgent(backend=mock).query` | plan / SELECT / レポート / 是正 SQL / 強分離特徴 | `agent/tests/test_graph.py` |
+| UT-AG-02 | SQL エラー時の再生成 | 1 本目を失敗させて 2 本目を成功 | `sql_retry_count>=1` かつ結果行がある | 同上 |
+| UT-AG-03 | Reflection 再試行 | 1 回目 is_sufficient=false | `retry_count>=2` のあとレポートが出る | 同上 |
+| UT-AG-04 | DML の拒否 | 1 本目 DELETE、2 本目 SELECT | 実行 SQL に DELETE が残らない | 同上 |
+| UT-AG-05 | SOP カーネル | fixture 行で `run_statistical_analysis` | V14 が強分離 | `agent/tests/test_analyzer.py` |
+| UT-AG-06 | 規程チャンクと検索 | タイトル付きマニュアルを投入して検索 | POL-SEC 文書が上位 | `agent/tests/test_knowledge.py` |
+| UT-AG-07 | SQL ガード | SELECT 以外と空 SQL | `SqlGuardError`。SELECT には LIMIT | `agent/tests/test_sql_guard.py` |
+| UT-AG-08 | 応答パース | fenced JSON / SQL | 抽出できる | `agent/tests/test_parsing.py` |
+| UT-AG-09 | スキーマカタログ | `schema_prompt` | 東京コピー表 `ulb_fraud_detection_public` と feature_matrix を含む | `agent/tests/test_config.py` |
 
 ## 5. 実施手順
 

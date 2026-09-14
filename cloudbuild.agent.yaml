@@ -1,0 +1,14 @@
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - -f
+      - app/Dockerfile
+      - -t
+      - ${_IMAGE}
+      - .
+images:
+  - ${_IMAGE}
+substitutions:
+  _IMAGE: asia-northeast1-docker.pkg.dev/${PROJECT_ID}/my-repo/fraud-agent-ui:latest
+timeout: 1200s

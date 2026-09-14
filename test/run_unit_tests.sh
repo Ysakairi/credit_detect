@@ -22,6 +22,7 @@ if [[ -z "${PYTHON:-}" ]]; then
 fi
 
 "$PYTHON" -m pip install -q -r test/requirements-unit.txt
+"$PYTHON" -m pip install -q -r agent/requirements.txt
 
 {
   echo "credit_detect unit tests"
@@ -30,4 +31,6 @@ fi
   echo "python_bin=$PYTHON"
   echo
   "$PYTHON" -m unittest discover -s test/unit -p 'test_*.py' -v
+  echo
+  PYTHONPATH="$ROOT:$ROOT/evaluate" "$PYTHON" -m unittest discover -s agent/tests -p 'test_*.py' -v
 } 2>&1 | tee test/results/unit_latest.txt
