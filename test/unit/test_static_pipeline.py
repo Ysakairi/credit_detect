@@ -139,7 +139,11 @@ class WorkflowTerraformTest(unittest.TestCase):
         self.gitignore = read(".gitignore")
 
     def test_templatefile_escapes_workflow_expressions(self):
-        self.assertIn("$${job_execution.metadata.name}", self.workflow)
+        self.assertIn("job_execution.metadata.name", self.workflow)
+        self.assertIn(
+            '$${"namespaces/" + job_execution.metadata.namespace + "/executions/"',
+            self.workflow,
+        )
         self.assertIn("compilation_result.body.name", self.workflow)
         self.assertIn("$${compilation_status.body.name}", self.workflow)
         self.assertIn("invocation_result.body.name", self.workflow)
@@ -182,6 +186,12 @@ class WorkflowTerraformTest(unittest.TestCase):
         self.assertIn("completionTime", self.workflow)
         self.assertIn("max_polls: 60", self.workflow)
         self.assertIn("Timed out waiting for Cloud Run Job to complete", self.workflow)
+        self.assertIn("job_execution.metadata.namespace", self.workflow)
+        self.assertIn('"/executions/" + job_execution.metadata.name', self.workflow)
+        self.assertNotIn(
+            "name: $${job_execution.metadata.name}",
+            self.workflow,
+        )
 
     def test_dataform_uses_http_v1_not_missing_connector(self):
         """Workflows に Dataform コネクタは無い。公式は dataform.googleapis.com/v1 + OAuth2。"""
