@@ -524,13 +524,105 @@ projects/YOUR_PROJECT_ID/locations/asia-northeast1/repositories/fraud-pipeline-r
 2. 画面上部のコンパイル状態が成功であること
 3. **コンパイル済みグラフ** タブで DAG が出ること（エラー文言ではなくグラフ）
 
-失敗しやすい例: `workflow_settings.yaml` の `defaultProject` が実プロジェクトと違う、Git 先が `credit_detect` 本体で `definitions/` がネストしている、`package.json` が無く `Can't find package.json` になる、`dataform.json` が残っていて `has been deprecated and cannot be defined alongside workflow_settings.yaml` になる。ルートに `package.json`（`@dataform/core`）があり、`dataform.json` が無いこと。初回はファイルを開いて **パッケージをインストール** する。
+失敗しやすい例: `workflow_settings.yaml` の `defaultProject` が実プロジェクトと違う、Git 先が `credit_detect` 本体で `definitions/` がネストしている、`package.json` が無く `Can't find package.json` になる、`dataform.json` が残っていて `has been deprecated and cannot be defined alongside workflow_settings.yaml` になる。ルートに `package.json`（`@dataform/core`）があり、`dataform.json` が無いこと。初回はファイルを開いて **パッケージをインストール** する。公開表を Dataform から直接読むと `Access Denied: Table bigquery-public-data:ml_datasets.ulb_fraud_detection` になる（後述のコピーと IAM を先にやる）。
+
+### Dataform SA の BigQuery 権限と公開データのコピー
+
+`initial_setup` の先頭アクションは、かつては公開表 `bigquery-public-data.ml_datasets.ulb_fraud_detection` を直接読んでいました。次のエラーで落ちます。
+
+```
+Access Denied: Table bigquery-public-data:ml_datasets.ulb_fraud_detection: User does not have permission to query table bigquery-public-data:ml_datasets.ulb_fraud_detection, or perhaps it does not exist.
+```
+
+原因は次の両方です（文言は権限不足と同じに見えます）。
+
+1. Dataform 実行 SA に BigQuery のジョブ作成・書き込みが無い  
+2. 公開表は **US** マルチリージョン、`dwh_prod` と Dataform の `defaultLocation` は **asia-northeast1**。リージョンをまたぐ 1 本のクエリは書けない（Cloud Run Job が Query → Load に分けているのと同じ制約）
+
+公開プロジェクト `bigquery-public-data` に IAM を付けることはできません。自分のプロジェクト側に権限を付け、公開表を `dwh_prod` へコピーしてから Dataform を回します。
+
+#### 1. Dataform SA へ BigQuery 権限を付ける
+
+Terraform は Dataform SA に `jobUser` / `dataViewer`（プロジェクト）と `dataEditor`（`dwh_prod`）を付けます。未 apply、または apply が古い場合は次の gcloud で足せます。コンソールの IAM 一覧では Google 管理 SA が隠れるので、**「Google 提供のロール付与を含める」** をオンにして確認します。
+
+```
+service-PROJECT_NUMBER@gcp-sa-dataform.iam.gserviceaccount.com
+```
+
+| ロール | 対象 | 用途 |
+| --- | --- | --- |
+| `roles/bigquery.jobUser` | プロジェクト | クエリ / ロード / `CREATE MODEL` のジョブ作成 |
+| `roles/bigquery.dataViewer` | プロジェクト | 参照（公式が Dataform に要求） |
+| `roles/bigquery.dataEditor` | データセット `dwh_prod` | 変換テーブルと BQML モデルの作成 |
+
+未付与なら（Owner で実行）:
+
+```bash
+PROJECT_ID="$(gcloud config get-value project)"
+PROJECT_NUMBER="$(gcloud projects describe "${PROJECT_ID}" --format='value(projectNumber)')"
+DATAFORM_SA="service-${PROJECT_NUMBER}@gcp-sa-dataform.iam.gserviceaccount.com"
+
+gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
+  --member="serviceAccount:${DATAFORM_SA}" \
+  --role="roles/bigquery.jobUser"
+
+gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
+  --member="serviceAccount:${DATAFORM_SA}" \
+  --role="roles/bigquery.dataViewer"
+
+gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
+  --member="serviceAccount:${DATAFORM_SA}" \
+  --role="roles/bigquery.dataEditor"
+```
+
+データセット単位に絞る場合は、最後の `dataEditor` の代わりにコンソールで **BigQuery → `dwh_prod` → 共有** から、同じ SA に **BigQuery データ編集者** を付けます（terraform の既定もデータセット単位です）。
+
+確認:
+
+```bash
+gcloud projects get-iam-policy "${PROJECT_ID}" \
+  --flatten="bindings[].members" \
+  --filter="bindings.members:serviceAccount:${DATAFORM_SA}" \
+  --format="table(bindings.role)"
+```
+
+`roles/bigquery.jobUser` が見えること。IAM 反映は数十秒かかることがあります。
+
+組織で VPC Service Controls を使っていると、公開データセット自体が遮断されます。その場合は管理者に `bigquery-public-data` への egress を依頼するか、別経路で CSV を `dwh_prod` へ入れてください。
+
+自分のアカウントで公開表が読めるかは、処理ロケーション **US** で次を実行して確認します。
+
+```bash
+bq query --location=US --use_legacy_sql=false --nouse_cache \
+  'SELECT COUNT(*) AS n FROM `bigquery-public-data.ml_datasets.ulb_fraud_detection`'
+```
+
+#### 2. 公開表を `dwh_prod` へコピーする
+
+Dataform はコピー後の `dwh_prod.ulb_fraud_detection_public` だけを読みます。`credit_detect_dataform` 側にも declaration `ulb_fraud_detection_public` と、それを `ref` する `initial_converted.sqlx` が必要です（本リポジトリの `dataform/` と揃える。ワークスペースで pull）。
+
+② で作った `batch_app/.venv` を使い、ADC は ① のユーザー（公開表を US で読めるアカウント）です。venv が無ければ `python3 -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt`。`test/.venv` でも可（必ず `cd batch_app` してから python する）。
+
+```bash
+cd batch_app
+source .venv/bin/activate
+export PROJECT_ID="$(gcloud config get-value project)"
+python copy_public_source.py
+deactivate
+cd ..
+
+bq show --location=asia-northeast1 "${PROJECT_ID}:dwh_prod.ulb_fraud_detection_public"
+```
+
+約 28 万行です。Query は US、Load は asia-northeast1 です。成功するとテーブルが見えます。
+
+---
 
 ### タグ `initial_setup` を実行する
 
 依存順:
 
-1. `ulb_fraud_detection_converted` … 公開データ全件 + Hour + 疑似 Date 1–50  
+1. `ulb_fraud_detection_converted` … ローカルコピー全件 + Hour + 疑似 Date 1–50  
 2. `ulb_fraud_detection_validation` … Date 32–36  
 3. `ulb_fraud_detection_train` … Date 37–50  
 4. `ulb_fraud_detection_model` … `BOOSTED_TREE_CLASSIFIER`（`ENABLE_GLOBAL_EXPLAIN=TRUE`）
@@ -543,7 +635,7 @@ projects/YOUR_PROJECT_ID/locations/asia-northeast1/repositories/fraud-pipeline-r
 4. 開始
 5. `CREATE MODEL` 完了まで待つ（数分〜十数分、課金の主因）。実行タブで状態を確認
 
-この時点では Cloud Run の Batch テーブルは不要です。初期変換は公開データセットを直接読みます。
+この時点では Cloud Run の Batch テーブルは不要です。初期変換は **先にコピーした** `dwh_prod.ulb_fraud_detection_public` を読みます。コピーしていないと declaration 先が空で失敗します。
 
 確認:
 
@@ -611,6 +703,7 @@ gcloud run jobs execute daily-ingest-job --region=asia-northeast1 --wait
 - Dataform が `credit_detect` 本体を向いている → sqlx がコンパイルされない
 - イメージ未プッシュ → Job が Image not found
 - `workflow_settings.yaml` の `defaultProject` が違う → 別プロジェクトに表が立つ / 権限エラー
+- 公開表を Dataform が直接読む → `Access Denied: Table bigquery-public-data:ml_datasets.ulb_fraud_detection`（US と asia-northeast1 の跨ぎ + SA 権限）。⑦の IAM 付与と `copy_public_source.py` を先に行う
 - `dataform.json` が `workflow_settings.yaml` と同居 → Dataform core 3.0 でコンパイル失敗（deprecated）
 - 空スライス（`TARGET_DATE` が 32–50 など）→ Job は TRUNCATE を拒否して失敗。Scheduler の既定は JST のカレンダー日なので通常 1–31
 
@@ -626,5 +719,5 @@ gcloud run jobs execute daily-ingest-job --region=asia-northeast1 --wait
 | ④ プロジェクト情報 | **`terraform.tfvars`。`main.tf` は触らない** |
 | ⑤ terraform | 先に Service Usage / Resource Manager / Dataform identity を gcloud で用意。Scheduler が即時有効 |
 | ⑥ Dataform Git | 接続先は `credit_detect_dataform`。HTTPS は Secret Manager の PAT + Dataform SA の `secretAccessor` |
-| ⑦ 初回 sqlx | ワークスペース ID `initial-setup` を作成してコンパイル。タグ `initial_setup` |
+| ⑦ 初回 sqlx | Dataform SA の BQ IAM + 公開表を `dwh_prod` へコピー。ワークスペース ID `initial-setup` を作成してコンパイル。タグ `initial_setup` |
 | ⑧ 結合試験 | Workflows を 1 回手動実行 |

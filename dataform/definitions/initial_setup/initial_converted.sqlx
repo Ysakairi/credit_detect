@@ -6,7 +6,8 @@ config {
   tags: ["initial_setup"]
 }
 
--- 初期設定(1) 公開データセットからデータを取得する
+-- 初期設定(1) 公開データのローカルコピーから成形する
+-- 公開表は US、dwh_prod は asia-northeast1 のため Dataform から直接は読めない
 -- Date の割り当ては batch_app/daily_insert.py と一致させること
 
 SELECT
@@ -16,6 +17,6 @@ SELECT
   -- Time の同値行で非決定的にならないよう Amount, V1 でタイブレークする
   MOD(ROW_NUMBER() OVER (ORDER BY Time, Amount, V1) - 1, 50) + 1 AS Date
 FROM
-  `bigquery-public-data.ml_datasets.ulb_fraud_detection`
+  ${ref("ulb_fraud_detection_public")}
 WHERE
   Time IS NOT NULL

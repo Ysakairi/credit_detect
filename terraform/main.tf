@@ -153,6 +153,19 @@ resource "google_project_iam_member" "dataform_bq_job_user" {
   ]
 }
 
+# 公式は Dataform 実行 ID に dataViewer も要求する（参照専用ソース用）。
+# 公開プロジェクト bigquery-public-data には付けられない。公開表は README ⑦
+# で dwh_prod へコピーしてから読む。
+resource "google_project_iam_member" "dataform_bq_data_viewer" {
+  project = var.project_id
+  role    = "roles/bigquery.dataViewer"
+  member  = local.dataform_sa
+  depends_on = [
+    google_project_service_identity.dataform,
+    google_dataform_repository.fraud_pipeline_repo,
+  ]
+}
+
 # ==========================================
 # 2. BigQuery データセット
 # ==========================================
