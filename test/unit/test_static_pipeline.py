@@ -305,11 +305,12 @@ class WorkflowTerraformTest(unittest.TestCase):
                     block_lines.append(line)
                     depth += line.count("{") - line.count("}")
                     if depth <= 0:
-                        self.assertNotIn(
-                            "deletion_protection",
-                            "\n".join(block_lines),
-                            msg=rel,
+                        code = "\n".join(
+                            ln
+                            for ln in block_lines
+                            if not ln.lstrip().startswith("#")
                         )
+                        self.assertNotIn("deletion_protection", code, msg=rel)
                         in_block = False
             self.assertFalse(in_block, msg=f"unclosed Cloud Run block in {rel}")
 
