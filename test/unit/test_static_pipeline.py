@@ -274,6 +274,16 @@ class WorkflowTerraformTest(unittest.TestCase):
         self.assertIn("*.tfvars", self.gitignore)
         self.assertIn("!**/example.tfvars", self.gitignore)
 
+    def test_import_existing_script_covers_409_resources(self):
+        script = read("terraform/import_existing.sh")
+        self.assertIn("google_service_account.run_jobs_sa", script)
+        self.assertIn("google_service_account.workflows_sa", script)
+        self.assertIn("google_service_account.scheduler_sa", script)
+        self.assertIn("google_bigquery_dataset.dwh_prod", script)
+        self.assertIn("google_dataform_repository.fraud_pipeline_repo", script)
+        self.assertIn("already in state", script)
+        self.assertNotIn("terraform destroy", script)
+
 
 if __name__ == "__main__":
     unittest.main()

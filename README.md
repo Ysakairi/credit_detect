@@ -356,6 +356,19 @@ terraform plan -var-file=terraform.tfvars
 terraform apply -var-file=terraform.tfvars
 ```
 
+`terraform.tfstate` は git に含まれません。別ディレクトリで clone し直すと、GCP 上のリソースは残ったまま Terraform は「未作成」と判断し、サービスアカウントやデータセットの **409 alreadyExists** で落ちます。その場合は **既存リソースを消さず**、state に取り込みます。
+
+```bash
+cd terraform
+terraform init
+chmod +x import_existing.sh
+./import_existing.sh
+terraform plan -var-file=terraform.tfvars
+terraform apply -var-file=terraform.tfvars
+```
+
+plan で Workflow の `source_contents` だけが変わるなら、Cloud Run Job や Dataform リポジトリは再作成されません。
+
 作成される主なもの:
 
 - API: BigQuery, Run, Workflows, Scheduler, Dataform, IAM, Secret Manager  
@@ -706,7 +719,7 @@ gcloud run jobs execute daily-ingest-job --region=asia-northeast1 --wait
 失敗しやすい点:
 
 - terraform apply が `serviceusage.services.list` で 403 → Service Usage / Cloud Resource Manager を gcloud で有効化し、ADC をやり直す
-- terraform apply が Dataform SA `does not exist` → ⑤ の `gcloud beta services identity create --service=dataform.googleapis.com` を実行してから再 apply
+- terraform apply がサービスアカウント / `dwh_prod` / Dataform リポジトリで 409 alreadyExists → 別ディレクトリの空 state。既存リソースは消さず `terraform/import_existing.sh` のあと apply
 - `--tag` のプロジェクト ID がプレースホルダのまま → ① の `gcloud config` と一致させる
 - ⑦より先に Workflows を回す → モデルなしで `ML.PREDICT` 失敗
 - Dataform が `credit_detect` 本体を向いている → sqlx がコンパイルされない
