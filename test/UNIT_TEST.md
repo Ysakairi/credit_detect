@@ -87,7 +87,7 @@ Google Cloud へ `main` をデプロイする前に、Cloud Run Job・評価カ�
 | UT-DF-11 | 不均衡対策 | モデル OPTIONS | `AUTO_CLASS_WEIGHTS = TRUE` | 同上 |
 | UT-DF-12 | 監査変数 | `includes/features.js` | `V14`, `V17`, `V12` | 同上 |
 | UT-DF-13 | Batch は declaration | `ulb_fraud_detection_Batch.sqlx` | `type: "declaration"` | 同上 |
-| UT-DF-14 | プロジェクト設定 | `workflow_settings.yaml` | `defaultProject` あり、`defaultDataset=dwh_prod`、`defaultLocation=asia-northeast1` | 同上 |
+| UT-DF-14 | プロジェクト設定 | `workflow_settings.yaml` | `defaultProject=skir-sample-credit`（アンダースコア無し）、`defaultDataset=dwh_prod`、`defaultLocation=asia-northeast1` | 同上 |
 | UT-DF-15 | Dataform core | `package.json` | `@dataform/core` がピンされている | 同上 |
 | UT-DF-16 | 旧設定ファイル不在 | `dataform.json` | Dataform core 3.0 では `workflow_settings.yaml` と併用できないためファイルが無い | 同上 |
 | UT-DF-17 | 公開データのローカルコピー | `ulb_fraud_detection_public.sqlx` | `type: "declaration"`。`initial_converted` は `bigquery-public-data` を直接参照しない | 同上 |

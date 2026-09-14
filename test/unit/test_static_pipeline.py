@@ -114,7 +114,8 @@ class DataformSqlTest(unittest.TestCase):
         project = re.search(r"^defaultProject:\s*(\S+)", settings, re.M).group(1)
         dataset = re.search(r"^defaultDataset:\s*(\S+)", settings, re.M).group(1)
         location = re.search(r"^defaultLocation:\s*(\S+)", settings, re.M).group(1)
-        self.assertTrue(project)
+        self.assertEqual(project, "skir-sample-credit")
+        self.assertNotIn("_", project)
         self.assertEqual(dataset, "dwh_prod")
         self.assertEqual(location, "asia-northeast1")
 
