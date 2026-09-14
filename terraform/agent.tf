@@ -127,11 +127,11 @@ resource "google_bigquery_table" "fraud_investigation_knowledge" {
 }
 
 resource "google_cloud_run_v2_service" "agent_ui" {
-  count               = var.enable_agent && var.enable_agent_cloud_run ? 1 : 0
-  name                = "fraud-agent-ui"
-  location            = var.region
-  deletion_protection = false
-  depends_on          = [google_project_service.agent_apis]
+  count    = var.enable_agent && var.enable_agent_cloud_run ? 1 : 0
+  name     = "fraud-agent-ui"
+  location = var.region
+  # deletion_protection は google provider 6.0 で追加。本構成は ~> 5.0 のため指定しない。
+  depends_on = [google_project_service.agent_apis]
 
   template {
     service_account = google_service_account.agent_runtime[0].email

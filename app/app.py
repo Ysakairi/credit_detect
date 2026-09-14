@@ -52,7 +52,7 @@ def _config_from_sidebar() -> AgentConfig:
 **参照テーブル**
 - `dwh_prod.ulb_fraud_detection_predictions`
 - `dwh_prod.ulb_fraud_detection_model`
-- `bigquery-public-data.ml_datasets.ulb_fraud_detection`
+- `dwh_prod.ulb_fraud_detection_public`（公開表の東京コピー）
             """
         )
     return AgentConfig(

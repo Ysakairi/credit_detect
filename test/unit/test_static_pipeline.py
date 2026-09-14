@@ -255,6 +255,8 @@ class WorkflowTerraformTest(unittest.TestCase):
             ROOT / "dataform",
             ROOT / "terraform",
             ROOT / "evaluate",
+            ROOT / "agent",
+            ROOT / "app",
         ]
         for scan_root in scan_roots:
             for path in scan_root.rglob("*"):
@@ -273,6 +275,48 @@ class WorkflowTerraformTest(unittest.TestCase):
         self.assertIn("*.tfstate", self.gitignore)
         self.assertIn("*.tfvars", self.gitignore)
         self.assertIn("!**/example.tfvars", self.gitignore)
+        self.assertIn(".env", self.gitignore)
+
+    def test_agent_tf_is_additive(self):
+        agent = read("terraform/agent.tf")
+        example = read("terraform/example.tfvars")
+        self.assertIn("fraud_investigation_knowledge", agent)
+        self.assertIn("sa-fraud-agent", agent)
+        self.assertIn("google_cloud_run_v2_service", agent)
+        self.assertIn("enable_agent", example)
+        self.assertIn("enable_agent_cloud_run", example)
+
+    def test_cloud_run_v2_omits_deletion_protection(self):
+        """google provider ~> 5.0 には Cloud Run v2 の deletion_protection が無い。"""
+        for rel in ("terraform/main.tf", "terraform/agent.tf"):
+            in_block = False
+            depth = 0
+            block_lines: list[str] = []
+            for line in read(rel).splitlines():
+                if not in_block and re.search(
+                    r'resource "google_cloud_run_v2_(job|service)"', line
+                ):
+                    in_block = True
+                    depth = 0
+                    block_lines = [line]
+                    depth += line.count("{") - line.count("}")
+                    continue
+                if in_block:
+                    block_lines.append(line)
+                    depth += line.count("{") - line.count("}")
+                    if depth <= 0:
+                        self.assertNotIn(
+                            "deletion_protection",
+                            "\n".join(block_lines),
+                            msg=rel,
+                        )
+                        in_block = False
+            self.assertFalse(in_block, msg=f"unclosed Cloud Run block in {rel}")
+
+    def test_agent_dockerfile_non_root(self):
+        dockerfile = read("app/Dockerfile")
+        self.assertIn("--uid 1001", dockerfile)
+        self.assertIsNotNone(re.search(r"^USER appuser\s*$", dockerfile, re.M))
 
 
 if __name__ == "__main__":

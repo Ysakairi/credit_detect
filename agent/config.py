@@ -78,6 +78,10 @@ class AgentConfig:
     def public_source_table(self) -> str:
         return "bigquery-public-data.ml_datasets.ulb_fraud_detection"
 
+    @property
+    def public_local_table(self) -> str:
+        return f"{self.fq_dataset}.ulb_fraud_detection_public"
+
     @classmethod
     def from_env(cls) -> "AgentConfig":
         project_id = _env("PROJECT_ID") or _env("GOOGLE_CLOUD_PROJECT")
@@ -115,11 +119,14 @@ AUDIT_FEATURES = ["V14", "V17", "V12"]
 
 EVALUATION_TABLES: Dict[str, str] = {
     "evaluation_matrix": "ulb_fraud_detection_evaluation_matrix",
+    "feature_matrix": "ulb_fraud_detection_feature_matrix",
     "feature_separation": "ulb_fraud_detection_feature_separation",
     "feature_importance": "ulb_fraud_detection_feature_importance",
     "global_explain": "ulb_fraud_detection_global_explain",
     "local_explain": "ulb_fraud_detection_local_explain",
     "imbalance_metrics": "ulb_fraud_detection_imbalance_metrics",
+    "cost_curve": "ulb_fraud_detection_cost_curve",
+    "woe_bins": "ulb_fraud_detection_woe_bins",
     "psi": "ulb_fraud_detection_psi",
 }
 
@@ -147,13 +154,17 @@ def schema_prompt(config: AgentConfig) -> str:
 3. `{config.batch_table}`
    Cloud Run Jobs が WRITE_TRUNCATE する当日スライス。
 
-4. `{config.public_source_table}`
-   公開元データ。Time, V1〜V28, Amount, Class。Date / Hour / 予測列は無い。
+4. `{config.public_local_table}`
+   公開元データの東京リージョンコピー（README ⑦）。Time, V1〜V28, Amount, Class。
+   Date / Hour / 予測列は無い。公開プロジェクトを直接読むと US 跨ぎ課金になるので、調査 SQL はこちらを優先する。
 
-5. BQML モデル: `{config.bqml_model}`
+5. `{config.public_source_table}`
+   公開元（US）。ジョブユーザーなら読めるが、PoC では 4 を使う。
+
+6. BQML モデル: `{config.bqml_model}`
    BOOSTED_TREE_CLASSIFIER。ML.EXPLAIN_PREDICT / ML.FEATURE_IMPORTANCE / ML.GLOBAL_EXPLAIN が利用可能。
 
-6. 評価テーブル（SOP-MLOPS-2026-002）:
+7. 評価テーブル（SOP-MLOPS-2026-002）:
 {eval_lines}
 
 【SQL 制約】

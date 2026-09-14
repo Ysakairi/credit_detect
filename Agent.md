@@ -2,7 +2,7 @@
 
 本書は `credit_detect` の日次 BQML パイプラインの上に載せる自律調査エージェントの **実装仕様** です。ビジネス背景とコスト方針の原本は設計メモ（Agent基本設計）です。本ドキュメントは、その設計を **実際のテーブル名・モデル名・制約** に落とし込んだものです。
 
-- 対象ブランチ: `agent/poc`
+- 対象ブランチ: `main`（`agent/` パッケージ。旧 PoC ブランチは `agent/poc`）
 - 実装パッケージ: `agent/`
 - GCP 構築手順: [README.md](README.md) の「Autonomous Fraud Investigation Agent の GCP 構築」
 
