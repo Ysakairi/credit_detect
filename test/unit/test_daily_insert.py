@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import inspect
 import json
 import logging
 import os
@@ -161,7 +162,9 @@ class IngestionTest(unittest.TestCase):
         query_job.to_dataframe.assert_called_with(create_bqstorage_client=False)
 
         load_kwargs = client.load_table_from_dataframe.call_args.kwargs
-        self.assertIs(load_kwargs["retry"], daily_insert.API_RETRY)
+        self.assertEqual(load_kwargs["num_retries"], daily_insert.BQ_LOAD_NUM_RETRIES)
+        self.assertNotIn("retry", load_kwargs)
+        self.assertNotIn("job_retry", load_kwargs)
         load_job.result.assert_called()
 
         job_config = load_kwargs["job_config"]
@@ -198,6 +201,17 @@ class ExtractQueryContractTest(unittest.TestCase):
         self.assertIn("create_bqstorage_client=False", src)
         self.assertEqual(daily_insert.BQ_JOB_TIMEOUT_SECONDS, 480.0)
         self.assertEqual(daily_insert.BQ_API_TIMEOUT_SECONDS, 60.0)
+        self.assertEqual(daily_insert.BQ_LOAD_NUM_RETRIES, 6)
+        load_fn = src.split("def load_daily_slice", 1)[1].split("def run_ingestion", 1)[0]
+        self.assertIn("num_retries=BQ_LOAD_NUM_RETRIES", load_fn)
+        self.assertNotIn("retry=", load_fn)
+
+    def test_load_table_from_dataframe_has_no_retry_parameter(self):
+        from google.cloud.bigquery import Client
+
+        params = inspect.signature(Client.load_table_from_dataframe).parameters
+        self.assertIn("num_retries", params)
+        self.assertNotIn("retry", params)
 
 
 if __name__ == "__main__":

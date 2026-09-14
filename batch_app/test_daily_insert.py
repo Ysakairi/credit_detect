@@ -122,7 +122,9 @@ class IngestionTest(unittest.TestCase):
         query_job.to_dataframe.assert_called_with(create_bqstorage_client=False)
 
         load_kwargs = client.load_table_from_dataframe.call_args.kwargs
-        self.assertIs(load_kwargs["retry"], daily_insert.API_RETRY)
+        self.assertEqual(load_kwargs["num_retries"], daily_insert.BQ_LOAD_NUM_RETRIES)
+        self.assertNotIn("retry", load_kwargs)
+        self.assertNotIn("job_retry", load_kwargs)
         load_job.result.assert_called()
 
     def test_client_is_reused(self):

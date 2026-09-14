@@ -68,6 +68,9 @@ API_RETRY = retry.Retry(
     multiplier=2.0,
     timeout=180.0,
 )
+# load_table_from_dataframe は client.query() と違い retry= を受け取らない。
+# 公式引数はアップロード再試行回数 num_retries（ライブラリ既定と同じ 6）。
+BQ_LOAD_NUM_RETRIES = 6
 
 _client: Optional[bigquery.Client] = None
 
@@ -277,7 +280,7 @@ def load_daily_slice(client: bigquery.Client, df, table_id: str) -> int:
         df,
         table_id,
         job_config=job_config,
-        retry=API_RETRY,
+        num_retries=BQ_LOAD_NUM_RETRIES,
         timeout=BQ_API_TIMEOUT_SECONDS,
     )
     _wait_for_job(load_job, timeout=BQ_JOB_TIMEOUT_SECONDS)
