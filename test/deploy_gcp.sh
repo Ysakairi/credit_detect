@@ -15,7 +15,7 @@ IMAGE_TAG="${IMAGE_TAG:-latest}"
 
 if [[ -z "$PROJECT_ID" ]]; then
   echo "GCP_PROJECT_ID（または GOOGLE_CLOUD_PROJECT）を設定してください。" >&2
-  echo "例: export GCP_PROJECT_ID=skir_sample_credit" >&2
+  echo "例: export GCP_PROJECT_ID=skir-sample-credit" >&2
   exit 1
 fi
 

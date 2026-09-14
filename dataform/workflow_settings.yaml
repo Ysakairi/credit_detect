@@ -1,7 +1,8 @@
 # Dataform workflow settings
 
 # Project settings
-defaultProject: skir_sample_credit
+# Must match the GCP project that owns dwh_prod (hyphens, not underscores).
+defaultProject: skir-sample-credit
 defaultDataset: dwh_prod
 defaultLocation: asia-northeast1
 
