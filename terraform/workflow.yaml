@@ -49,7 +49,9 @@ main:
         try:
           call: googleapis.run.v1.namespaces.executions.get
           args:
-            name: $${job_execution.metadata.name}
+            # jobs.run の metadata.name は Execution の短い ID のみ。
+            # それを name に使うと GET /v1/daily-ingest-job-xxx になり 404 になる。
+            name: $${"namespaces/" + job_execution.metadata.namespace + "/executions/" + job_execution.metadata.name}
             location: ${region}
           result: job_status
         retry:

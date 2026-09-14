@@ -98,7 +98,7 @@ Google Cloud へ `main` をデプロイする前に、Cloud Run Job・評価カ�
 | --- | --- | --- | --- | --- |
 | UT-TF-01 | templatefile 用エスケープ | `workflow.yaml` | Workflows 式が `$${...}`。`${compilation_result` の生埋め込みなし | `unit/test_static_pipeline.py` |
 | UT-TF-02 | Job の location | `run_ingestion_job` | `location: ${region}` | 同上 |
-| UT-TF-03 | Job 完了ポーリング | `wait_for_job` / `get_job_status` | `completionTime` と失敗時 raise、最大 60 poll | 同上 |
+| UT-TF-03 | Job 完了ポーリング | `wait_for_job` / `get_job_status` | `completionTime` と失敗時 raise、最大 60 poll。`executions.get` は `namespaces/{namespace}/executions/{name}`（短い ID だけだと 404） | 同上 |
 | UT-TF-04 | Dataform 非同期待ち | compile / invoke | `http.post`/`http.get` で Dataform v1 を呼び、`SUCCEEDED` まで待機。FAILED で raise | 同上 |
 | UT-TF-05 | 日次タグのみ | `execute_dataform` | `includedTags: daily_batch`。`initial_setup` を日次で回さない | 同上 |
 | UT-TF-06 | gitCommitish | compile body | `"main"` | 同上 |
