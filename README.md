@@ -174,7 +174,7 @@ gcloud config get-value project
 
 ## ② Ubuntu 上で単体テスト
 
-GCP は呼びません。Python 3.10 相当を想定します。
+GCP は呼びません。Python 3.10 相当を想定します。Ubuntu / WSL では `python` は標準では入っておらず `python3` だけです。`python3 -m venv .venv` のあと `source .venv/bin/activate` すると、venv 内の `python` が使えます。venv 作成に失敗する場合は `sudo apt install python3-venv python3.12-venv python3-full`。
 
 **評価ロジック**
 
@@ -601,11 +601,18 @@ bq query --location=US --use_legacy_sql=false --nouse_cache \
 
 Dataform はコピー後の `dwh_prod.ulb_fraud_detection_public` だけを読みます。`credit_detect_dataform` 側にも declaration `ulb_fraud_detection_public` と、それを `ref` する `initial_converted.sqlx` が必要です（本リポジトリの `dataform/` と揃える。ワークスペースで pull）。
 
-② で作った `batch_app/.venv` を使い、ADC は ① のユーザー（公開表を US で読めるアカウント）です。venv が無ければ `python3 -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt`。`test/.venv` でも可（必ず `cd batch_app` してから python する）。
+ADC は ① のユーザー（公開表を US で読めるアカウント）です。
+
+Ubuntu / WSL では `python` コマンドは標準では入りません（`python3` のみ）。`python copy_public_source.py` は **`python3` で仮想環境を作り、それを有効化したあと** で実行します。venv 内に `python` が作られます。`.venv` は git に含まれないので、② を飛ばした場合や clone し直した場合はここで作ります。`python3 -m venv` が失敗したら `sudo apt install python3-venv python3.12-venv python3-full`。
 
 ```bash
 cd batch_app
+
+# ② で batch_app/.venv を作済みなら、作成と pip は省略可
+python3 -m venv .venv
 source .venv/bin/activate
+pip install -r requirements.txt
+
 export PROJECT_ID="$(gcloud config get-value project)"
 python copy_public_source.py
 deactivate
@@ -613,6 +620,8 @@ cd ..
 
 bq show --location=asia-northeast1 "${PROJECT_ID}:dwh_prod.ulb_fraud_detection_public"
 ```
+
+プロンプトに `(.venv)` が出ていることを確認してから `python` を実行してください。venv を使わず `python3 copy_public_source.py` でも起動はできますが、Ubuntu 24.04 以降はシステム `pip` が拒否されるため非推奨です。
 
 約 28 万行です。Query は US、Load は asia-northeast1 です。成功するとテーブルが見えます。
 
@@ -704,6 +713,8 @@ gcloud run jobs execute daily-ingest-job --region=asia-northeast1 --wait
 - イメージ未プッシュ → Job が Image not found
 - `workflow_settings.yaml` の `defaultProject` が違う → 別プロジェクトに表が立つ / 権限エラー
 - 公開表を Dataform が直接読む → `Access Denied: Table bigquery-public-data:ml_datasets.ulb_fraud_detection`（US と asia-northeast1 の跨ぎ + SA 権限）。⑦の IAM 付与と `copy_public_source.py` を先に行う
+- `python: command not found` / `.venv/bin/activate: No such file` → ⑦ の `python3 -m venv .venv` を先に実行する。システムに `python` は無くてよい
+- `load_table_from_dataframe() got an unexpected keyword argument 'retry'` → `Client.load_table_from_dataframe` は `retry=` を受けない。現行コードは `num_retries` を使うので `main` を pull する
 - `dataform.json` が `workflow_settings.yaml` と同居 → Dataform core 3.0 でコンパイル失敗（deprecated）
 - 空スライス（`TARGET_DATE` が 32–50 など）→ Job は TRUNCATE を拒否して失敗。Scheduler の既定は JST のカレンダー日なので通常 1–31
 

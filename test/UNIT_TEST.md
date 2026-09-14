@@ -47,7 +47,7 @@ Google Cloud へ `main` をデプロイする前に、Cloud Run Job・評価カ�
 | UT-ING-10 | Query は US + retry + timeout | `run_ingestion` の `client.query` 引数 | `location=US`、`retry=API_RETRY`、`timeout=BQ_API_TIMEOUT_SECONDS` | 同上 |
 | UT-ING-11 | Job 完了待ちは 480s | `query_job.result` | `timeout=BQ_JOB_TIMEOUT_SECONDS` かつ retry 付き | 同上 |
 | UT-ING-12 | Storage Read API を使わない | `to_dataframe` | `create_bqstorage_client=False` | 同上 |
-| UT-ING-13 | Load にも retry | `load_table_from_dataframe` | `retry=API_RETRY`、`result` 待ちあり | 同上 |
+| UT-ING-13 | Load は公式の num_retries | `load_table_from_dataframe` | `num_retries=BQ_LOAD_NUM_RETRIES`、`retry=` なし、`result` 待ちあり | 同上 |
 | UT-ING-14 | BigQuery クライアント再利用 | `get_bq_client` を 2 回 | コンストラクタ 1 回、同一インスタンス | 同上 |
 | UT-ING-15 | PROJECT_ID 必須 | 環境変数なしで `run_ingestion` | `RuntimeError` | 同上 |
 | UT-ING-16 | DESTINATION_TABLE 必須 | テーブル未設定 | `RuntimeError` | 同上 |
