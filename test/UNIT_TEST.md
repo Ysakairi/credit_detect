@@ -91,6 +91,10 @@ Google Cloud へ `main` をデプロイする前に、Cloud Run Job・評価カ�
 | UT-DF-15 | Dataform core | `package.json` | `@dataform/core` がピンされている | 同上 |
 | UT-DF-16 | 旧設定ファイル不在 | `dataform.json` | Dataform core 3.0 では `workflow_settings.yaml` と併用できないためファイルが無い | 同上 |
 | UT-DF-17 | 公開データのローカルコピー | `ulb_fraud_detection_public.sqlx` | `type: "declaration"`。`initial_converted` は `bigquery-public-data` を直接参照しない | 同上 |
+| UT-DF-18 | Looker 評価テーブルの履歴 | 評価 sqlx 11 本 | `type: "incremental"`、`partitionBy: evaluation_date`、`protected: true`、当日 DELETE | 同上 |
+| UT-DF-19 | 履歴ヘルパー | `includes/eval_history.js` | JST の当日だけ DELETE。`reload_days` で過去日を消さない | 同上 |
+| UT-DF-20 | 局所 SHAP の大域結合 | `daily_local_explain.sqlx` | `global_explain` を当日 `evaluation_date` に限定 | 同上 |
+| UT-DF-21 | 評価マトリクスの日付結合 | `daily_evaluation_matrix.sqlx` | `ML.EVALUATE` 行を `evaluation_date` で JOIN。CROSS JOIN しない | 同上 |
 
 ### 4.4 Workflows / Terraform / Dockerfile（静的）
 

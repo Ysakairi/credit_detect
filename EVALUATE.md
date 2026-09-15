@@ -34,7 +34,9 @@
 
 ## 2. Looker Studio 向けテーブル
 
-日次バッチ（`daily_batch`）が `dwh_prod` に CREATE OR REPLACE する。すべての評価テーブルに `evaluation_date`（Asia/Tokyo）と `evaluated_at` を付与する。
+日次バッチ（`daily_batch`）が `dwh_prod` へ `evaluation_date` パーティションの incremental テーブルとして書き込む。当日分は DELETE → INSERT で差し替え、過去日は残す。同一日の再実行はべき等。`protected: true` のため full-refresh では履歴を落とさない。すべての評価テーブルに `evaluation_date`（Asia/Tokyo）と `evaluated_at` を付与する。
+
+Looker Studio のスコアカードは最新の `evaluation_date` でフィルタし、時系列チャートは `evaluation_date` を日付軸にする。
 
 ### 2.1 ダッシュボードの主テーブル（ロング形式）
 
@@ -267,3 +269,19 @@ $$
 2. 特徴量乖離指標は当日バッチ（1 疑似日）で算出するため、陽性が極端に少ない日は IV / KS が不安定になる。その場合は rating と併せて `n_pos`（`ulb_fraud_detection_imbalance_metrics`）を確認する。
 3. PSI のベースラインは学習テーブルを直接参照する（Dataform `ref` には載せない）。学習テーブルが無い環境では当該アクションは失敗する。
 4. 既存の `ulb_fraud_detection_evaluation` は後方互換のため残し、`evaluation_date` / `evaluated_at` のみ追加している。
+5. 評価テーブルは incremental（`evaluation_date` パーティション）である。入力の Batch は当日スライスの WRITE_TRUNCATE のため、再計算できるのは当日だけである。過去日は再計算せず蓄積する。
+6. 以前の CREATE OR REPLACE テーブルが残っている環境では、パーティション付き incremental に切り替えられない。初回だけ次を実行してから `daily_batch` を回す。
+
+```sql
+DROP TABLE IF EXISTS dwh_prod.ulb_fraud_detection_evaluation;
+DROP TABLE IF EXISTS dwh_prod.ulb_fraud_detection_feature_separation;
+DROP TABLE IF EXISTS dwh_prod.ulb_fraud_detection_woe_bins;
+DROP TABLE IF EXISTS dwh_prod.ulb_fraud_detection_feature_importance;
+DROP TABLE IF EXISTS dwh_prod.ulb_fraud_detection_global_explain;
+DROP TABLE IF EXISTS dwh_prod.ulb_fraud_detection_local_explain;
+DROP TABLE IF EXISTS dwh_prod.ulb_fraud_detection_imbalance_metrics;
+DROP TABLE IF EXISTS dwh_prod.ulb_fraud_detection_cost_curve;
+DROP TABLE IF EXISTS dwh_prod.ulb_fraud_detection_psi;
+DROP TABLE IF EXISTS dwh_prod.ulb_fraud_detection_evaluation_matrix;
+DROP TABLE IF EXISTS dwh_prod.ulb_fraud_detection_feature_matrix;
+```

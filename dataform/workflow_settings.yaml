@@ -9,4 +9,6 @@ defaultLocation: asia-northeast1
 # Compilation variables
 vars:
   env: "prod"
+  # 評価テーブルの再計算は当日だけ（Batch が WRITE_TRUNCATE のため）。
+  # 過去日を消して再計算するには使わない。
   reload_days: "3"

@@ -1,12 +1,48 @@
 config {
-  type: "table",
+  type: "incremental",
   schema: "dwh_prod",
   name: "ulb_fraud_detection_feature_matrix",
-  description: "Looker Studio long-format feature evaluation matrix (SOP-MLOPS-2026-002 categories 1-2)",
-  tags: ["daily_batch"]
+  description: "Looker Studio long-format feature evaluation matrix (SOP-MLOPS-2026-002 categories 1-2, historical snapshots by evaluation_date)",
+  tags: ["daily_batch"],
+  protected: true,
+  bigquery: {
+    partitionBy: "evaluation_date"
+  }
 }
 
 -- 特徴量×メトリクスのロング形式。Looker Studio で metric_name をフィルタして利用する。
+-- 詳細テーブルは過去日を保持するため、当日分だけを読み、当日パーティションを差し替える。
+
+preOperations {
+  ${when(incremental(), require("includes/eval_history").deleteTodaySnapshot(self()))}
+}
+
+WITH separation AS (
+  SELECT
+    *
+  FROM
+    ${ref("ulb_fraud_detection_feature_separation")}
+  WHERE
+    ${require("includes/eval_history").isToday()}
+),
+
+importance AS (
+  SELECT
+    *
+  FROM
+    ${ref("ulb_fraud_detection_feature_importance")}
+  WHERE
+    ${require("includes/eval_history").isToday()}
+),
+
+shap AS (
+  SELECT
+    *
+  FROM
+    ${ref("ulb_fraud_detection_global_explain")}
+  WHERE
+    ${require("includes/eval_history").isToday()}
+)
 
 SELECT
   evaluation_date,
@@ -21,7 +57,7 @@ SELECT
   CAST(NULL AS INT64) AS rank_value,
   ks_rating = "分離能不足" AS is_flagged
 FROM
-  ${ref("ulb_fraud_detection_feature_separation")}
+  separation
 
 UNION ALL
 
@@ -38,7 +74,7 @@ SELECT
   CAST(NULL AS INT64),
   iv_rating IN ("無効変数", "過学習疑い")
 FROM
-  ${ref("ulb_fraud_detection_feature_separation")}
+  separation
 
 UNION ALL
 
@@ -55,7 +91,7 @@ SELECT
   CAST(NULL AS INT64),
   cliffs_rating = "Negligible"
 FROM
-  ${ref("ulb_fraud_detection_feature_separation")}
+  separation
 
 UNION ALL
 
@@ -72,7 +108,7 @@ SELECT
   CAST(NULL AS INT64),
   FALSE
 FROM
-  ${ref("ulb_fraud_detection_feature_separation")}
+  separation
 
 UNION ALL
 
@@ -89,7 +125,7 @@ SELECT
   rank_gain,
   FALSE
 FROM
-  ${ref("ulb_fraud_detection_feature_importance")}
+  importance
 
 UNION ALL
 
@@ -106,7 +142,7 @@ SELECT
   rank_cover,
   cover_overfit_flag
 FROM
-  ${ref("ulb_fraud_detection_feature_importance")}
+  importance
 
 UNION ALL
 
@@ -127,4 +163,4 @@ SELECT
   rank_shap,
   is_audit_variable AND rank_shap > 5
 FROM
-  ${ref("ulb_fraud_detection_global_explain")}
+  shap

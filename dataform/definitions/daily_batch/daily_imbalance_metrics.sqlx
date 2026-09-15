@@ -1,13 +1,22 @@
 config {
-  type: "table",
+  type: "incremental",
   schema: "dwh_prod",
   name: "ulb_fraud_detection_imbalance_metrics",
-  description: "PR-AUC, Top-K capture rate, and cost-sensitive expected loss with SOP ratings",
-  tags: ["daily_batch"]
+  description: "PR-AUC, Top-K capture rate, and cost-sensitive expected loss with SOP ratings (historical snapshots by evaluation_date)",
+  tags: ["daily_batch"],
+  protected: true,
+  bigquery: {
+    partitionBy: "evaluation_date"
+  }
 }
 
 -- SOP-MLOPS-2026-002 第5章: 不均衡データ特有の予測性能とビジネス損失
 -- C_FN = Amount + 15 (チャージバック), C_FP = 5, C_TP = 0.1
+-- 当日パーティションだけ差し替え、過去日は残す
+
+preOperations {
+  ${when(incremental(), require("includes/eval_history").deleteTodaySnapshot(self()))}
+}
 
 WITH pred AS (
   SELECT
@@ -147,7 +156,7 @@ cost_opt AS (
 )
 
 SELECT
-  CURRENT_DATE("Asia/Tokyo") AS evaluation_date,
+  ${require("includes/eval_history").EVALUATION_DATE_EXPR} AS evaluation_date,
   CURRENT_TIMESTAMP() AS evaluated_at,
   c.n_rows,
   c.n_pos,

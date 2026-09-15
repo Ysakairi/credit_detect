@@ -91,7 +91,7 @@ IT-ING-05/06 は Job を動かすため既定 OFF。`RUN_INGEST_JOB=1` のとき
 | IT-ML-01 | モデル存在 | `dwh_prod.ulb_fraud_detection_model` | モデルが存在する。無ければ SKIP（日次の前提不足） | 同上 |
 | IT-ML-02 | 日次テーブル | Batch / daily_converted / predictions | テーブルが存在し、predictions は Date 1〜31 | 同上 |
 | IT-ML-03 | 学習リーク | predictions の Date | 32 以上が無い | 同上 |
-| IT-SOP-01 | evaluation テーブル | `ulb_fraud_detection_evaluation` | 行がある。evaluation_date が JST 日付 | 同上 |
+| IT-SOP-01 | evaluation テーブル | `ulb_fraud_detection_evaluation` | 行がある。evaluation_date が JST 日付。過去日があれば当日以外も残る | 同上 |
 | IT-SOP-02 | 評価マトリクス | `ulb_fraud_detection_evaluation_matrix` | category_id 1〜4 のメトリクスが揃う | 同上 |
 | IT-SOP-03 | 不均衡指標 | `ulb_fraud_detection_imbalance_metrics` | `pr_auc` 列がある。値を記録 | 同上 |
 | IT-SOP-04 | PSI | `ulb_fraud_detection_psi` | `psi_rating` が Green/Yellow/Red | 同上 |

@@ -1,17 +1,26 @@
 config {
-  type: "table",
+  type: "incremental",
   schema: "dwh_prod",
   name: "ulb_fraud_detection_evaluation",
-  description: "Daily model evaluation metrics on the batch slice",
+  description: "Daily model evaluation metrics on the batch slice (historical snapshots by evaluation_date)",
   tags: ["daily_batch"],
-  dependencies: ["ulb_fraud_detection_predictions"]
+  dependencies: ["ulb_fraud_detection_predictions"],
+  protected: true,
+  bigquery: {
+    partitionBy: "evaluation_date"
+  }
 }
 
 -- 日次バッチ(4) モデル評価指標テーブルの作成
 -- 推論と同じく、学習に未使用の疑似日付 1〜31 で評価する
+-- 当日パーティションだけ差し替え、過去日は残す（Looker Studio の時系列用）
+
+preOperations {
+  ${when(incremental(), require("includes/eval_history").deleteTodaySnapshot(self()))}
+}
 
 SELECT
-  CURRENT_DATE("Asia/Tokyo") AS evaluation_date,
+  ${require("includes/eval_history").EVALUATION_DATE_EXPR} AS evaluation_date,
   CURRENT_TIMESTAMP() AS evaluated_at,
   *
 FROM
