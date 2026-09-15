@@ -104,6 +104,9 @@ Google Cloud へ `main` をデプロイする前に、Cloud Run Job・評価カ�
 | UT-TF-06 | gitCommitish | compile body | `"main"` | 同上 |
 | UT-TF-07 | 一時障害リトライ | GCP API ステップ | `http.default_retry_predicate`（Workflows 組み込み。`retry.transient_errors` は未定義） | 同上 |
 | UT-TF-08 | Dataform リポジトリ定義 | `main.tf` | `google_dataform_repository` が存在する | 同上 |
+| UT-TF-08a | Dataform Git URL | `main.tf` / `example.tfvars` | 既定は `credit_detect_dataform`。`credit_detect.git` は validation で拒否 | 同上 |
+| UT-TF-08b | Git 接続の保持 | `google_dataform_repository` | `lifecycle.ignore_changes = [git_remote_settings]`。トークン空の apply で接続を消さない | 同上 |
+| UT-TF-08c | PAT シークレット IAM | `main.tf` | トークン指定時に Dataform SA へ `secretAccessor` | 同上 |
 | UT-TF-09 | Run Jobs IAM | `main.tf` | dataset `dataEditor` + project `jobUser` | 同上 |
 | UT-TF-10 | Scheduler SA 分離 | `main.tf` | `sa-scheduler-trigger` と `workflows.invoker` | 同上 |
 | UT-TF-11 | Job ポーリング権限 | `main.tf` | Job に `roles/run.developer` | 同上 |

@@ -1,5 +1,6 @@
 project_id = "your-gcp-project-id"
 
-# Optional: Secret Manager version for the GitHub PAT used by Dataform.
-# dataform_git_url               = "https://github.com/Ysakairi/credit_detect.git"
-# dataform_github_token_secret   = "projects/your-gcp-project-id/secrets/dataform-github-token/versions/latest"
+# Dataform Git (optional on create). Point at credit_detect_dataform, not credit_detect.
+# Subsequent applies do not unlink a console Git connection (ignore_changes).
+# dataform_git_url             = "https://github.com/Ysakairi/credit_detect_dataform.git"
+# dataform_github_token_secret = "projects/your-gcp-project-id/secrets/dataform-github-token/versions/latest"

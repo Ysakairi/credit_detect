@@ -181,6 +181,20 @@ class EnvironmentTest(unittest.TestCase):
         )
         body = GcpHelpers.get_json(url)
         self.assertIn("name", body)
+        git = body.get("gitRemoteSettings") or {}
+        remote_url = git.get("url") or ""
+        self.assertTrue(
+            remote_url,
+            msg=(
+                "Dataform Git が未接続。日次 Workflow の gitCommitish=main が "
+                "FAILED_PRECONDITION になる"
+            ),
+        )
+        self.assertNotRegex(
+            remote_url,
+            r"/credit_detect(\.git)?/?$",
+            msg="Dataform の Git 先は credit_detect_dataform（sqlx がルート）",
+        )
 
     def test_project_id_matches_workflow_settings(self):
         settings = (ROOT / "dataform" / "workflow_settings.yaml").read_text(

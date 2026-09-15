@@ -41,16 +41,29 @@ variable "repo_docker" {
 }
 
 variable "dataform_git_url" {
-  description = "HTTPS URL of the GitHub repository connected to Dataform"
+  description = "HTTPS URL of the GitHub repository with sqlx at the repo root (credit_detect_dataform). Do not use credit_detect; Dataform only compiles definitions/ at the root."
   type        = string
-  default     = "https://github.com/Ysakairi/credit_detect.git"
+  default     = "https://github.com/Ysakairi/credit_detect_dataform.git"
+
+  validation {
+    condition     = !can(regex("/credit_detect(\\.git)?/?$", var.dataform_git_url))
+    error_message = "Dataform Git URL must be credit_detect_dataform (sqlx at repo root), not credit_detect."
+  }
 }
 
 variable "dataform_github_token_secret" {
-  description = "Secret Manager version resource name for the GitHub PAT used by Dataform. Leave empty to create the repository without a git remote."
+  description = "Secret Manager version resource name for the GitHub PAT used by Dataform (projects/.../secrets/.../versions/...). Empty skips Git on create; later applies do not clear an existing console Git link."
   type        = string
   default     = ""
   sensitive   = true
+
+  validation {
+    condition = var.dataform_github_token_secret == "" || can(regex(
+      "^projects/[^/]+/secrets/[^/]+/versions/[^/]+$",
+      var.dataform_github_token_secret,
+    ))
+    error_message = "dataform_github_token_secret must be empty or a Secret Manager version name (projects/.../secrets/.../versions/...)."
+  }
 }
 
 resource "google_project_service_identity" "dataform" {
@@ -62,6 +75,11 @@ resource "google_project_service_identity" "dataform" {
 
 locals {
   dataform_sa = "serviceAccount:${google_project_service_identity.dataform.email}"
+  # Empty token → try() returns "" so the IAM binding is skipped.
+  dataform_github_token_secret_id = try(
+    regex("secrets/([^/]+)/", var.dataform_github_token_secret),
+    "",
+  )
   apis = [
     "bigquery.googleapis.com",
     "run.googleapis.com",
@@ -243,6 +261,8 @@ resource "google_dataform_repository" "fraud_pipeline_repo" {
     google_project_service_identity.dataform,
   ]
 
+  # Token set: attach Git on create. Token empty: create without Git, then
+  # connect in the console (README ⑥ B).
   dynamic "git_remote_settings" {
     for_each = var.dataform_github_token_secret == "" ? [] : [1]
     content {
@@ -251,6 +271,27 @@ resource "google_dataform_repository" "fraud_pipeline_repo" {
       authentication_token_secret_version = var.dataform_github_token_secret
     }
   }
+
+  # Apply with an empty token used to PATCH-clear git_remote_settings and
+  # unlink Git. Daily compile then fails with "git reference 'main' could
+  # not be resolved". Ignore updates so console- or create-time Git survives.
+  lifecycle {
+    ignore_changes = [git_remote_settings]
+  }
+}
+
+# Terraform-managed Git needs the Dataform SA to read the PAT secret.
+# Console linking still needs the same binding (README ⑥ step 3) if this
+# resource is skipped because the token variable is empty.
+resource "google_secret_manager_secret_iam_member" "dataform_github_token_accessor" {
+  count     = local.dataform_github_token_secret_id == "" ? 0 : 1
+  project   = var.project_id
+  secret_id = local.dataform_github_token_secret_id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = local.dataform_sa
+  depends_on = [
+    google_project_service_identity.dataform,
+  ]
 }
 
 # ==========================================

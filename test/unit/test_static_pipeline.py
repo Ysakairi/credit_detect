@@ -220,6 +220,37 @@ class WorkflowTerraformTest(unittest.TestCase):
         self.assertIn("google_dataform_repository", self.tf)
         self.assertIn("fraud-pipeline-repo", self.tf)
 
+    def test_dataform_git_url_defaults_to_dataform_repo(self):
+        self.assertIn(
+            'default     = "https://github.com/Ysakairi/credit_detect_dataform.git"',
+            self.tf,
+        )
+        self.assertNotIn(
+            'default     = "https://github.com/Ysakairi/credit_detect.git"',
+            self.tf,
+        )
+        self.assertIn(
+            "Dataform Git URL must be credit_detect_dataform",
+            self.tf,
+        )
+        example = read("terraform/example.tfvars")
+        self.assertIn("credit_detect_dataform.git", example)
+        self.assertNotIn("credit_detect.git", example)
+
+    def test_dataform_git_remote_not_cleared_on_apply(self):
+        """トークン空の apply がコンソールの Git 接続を PATCH で消さない。"""
+        self.assertIn("ignore_changes = [git_remote_settings]", self.tf)
+        repo_block = self.tf.split('resource "google_dataform_repository"')[1]
+        repo_block = repo_block.split('resource "')[0]
+        self.assertIn("lifecycle", repo_block)
+        self.assertIn("ignore_changes", repo_block)
+
+    def test_dataform_secret_accessor_iam(self):
+        self.assertIn("google_secret_manager_secret_iam_member", self.tf)
+        self.assertIn("dataform_github_token_accessor", self.tf)
+        self.assertIn("roles/secretmanager.secretAccessor", self.tf)
+        self.assertIn("dataform_github_token_secret_id", self.tf)
+
     def test_run_jobs_iam(self):
         self.assertIn("roles/bigquery.dataEditor", self.tf)
         self.assertIn("roles/bigquery.jobUser", self.tf)
