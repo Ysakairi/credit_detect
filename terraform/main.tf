@@ -85,10 +85,8 @@ locals {
     ? var.dataform_github_token_secret
     : "projects/${data.google_project.current.number}/secrets/dataform-github-token/versions/latest"
   )
-  dataform_github_token_secret_id = regex(
-    "secrets/([^/]+)/",
-    local.dataform_github_token_secret,
-  )
+  # projects/<n>/secrets/<id>/versions/<v> → secret id is the 4th path segment.
+  dataform_github_token_secret_id = split("/", local.dataform_github_token_secret)[3]
   apis = [
     "bigquery.googleapis.com",
     "run.googleapis.com",

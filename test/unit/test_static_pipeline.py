@@ -254,6 +254,10 @@ class WorkflowTerraformTest(unittest.TestCase):
         self.assertIn("dataform_github_token_accessor", self.tf)
         self.assertIn("roles/secretmanager.secretAccessor", self.tf)
         self.assertIn("dataform_github_token_secret_id", self.tf)
+        self.assertIn(
+            'split("/", local.dataform_github_token_secret)[3]',
+            self.tf,
+        )
         accessor = self.tf.split("dataform_github_token_accessor")[1].split("resource ")[0]
         self.assertNotIn("count", accessor)
 
