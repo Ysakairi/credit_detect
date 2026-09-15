@@ -296,9 +296,9 @@ repo_docker = "my-repo"
 | --- | --- |
 | リポジトリ ソース | `https://github.com/Ysakairi/credit_detect_dataform.git` |
 | デフォルト ブランチ | `main` |
-| シークレット トークン | `projects/<project_id>/secrets/dataform-github-token/versions/latest` |
+| シークレット トークン | `projects/<project_number>/secrets/dataform-github-token/versions/latest` |
 
-`<project_id>` は上の `project_id` から入ります。`credit_detect` 本体は validation で拒否されます。上書きが必要なときだけ `dataform_git_url` / `dataform_github_token_secret` を tfvars に足します。
+`<project_number>` は `project_id` から Terraform が解決します（コンソールのシークレット リソース名と同じ数字）。`credit_detect` 本体は validation で拒否されます。上書きが必要なときだけ `dataform_git_url` / `dataform_github_token_secret` を tfvars に足します。
 
 apply はシークレット `dataform-github-token` が無いと Git 接続で失敗します。⑤の前に ⑥ の PAT とシークレット作成を済ませてください。
 
@@ -467,7 +467,7 @@ gcloud secrets add-iam-policy-binding dataform-github-token \
 | --- | --- |
 | リポジトリ ソース | `https://github.com/Ysakairi/credit_detect_dataform.git` |
 | デフォルトのブランチ名 | `main` |
-| シークレット トークン | `projects/<project_id>/secrets/dataform-github-token/versions/latest` |
+| シークレット トークン | `projects/<project_number>/secrets/dataform-github-token/versions/latest` |
 
 既にコンソール接続が外れている場合も、この apply で付け直せます（以前の空トークン apply が接続を消していた挙動は、Git を常に宣言するように変えて止めています）。
 
@@ -475,7 +475,7 @@ gcloud secrets add-iam-policy-binding dataform-github-token \
 
 ```hcl
 dataform_git_url             = "https://github.com/Ysakairi/credit_detect_dataform.git"
-dataform_github_token_secret = "projects/YOUR_PROJECT_ID/secrets/dataform-github-token/versions/latest"
+dataform_github_token_secret = "projects/YOUR_PROJECT_NUMBER/secrets/dataform-github-token/versions/latest"
 ```
 
 ### B. コンソールで確認・応急接続する場合

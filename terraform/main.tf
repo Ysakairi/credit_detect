@@ -52,7 +52,7 @@ variable "dataform_git_url" {
 }
 
 variable "dataform_github_token_secret" {
-  description = "Secret Manager version for the GitHub PAT. Empty uses projects/<project_id>/secrets/dataform-github-token/versions/latest. Do not put this in terraform.tfvars unless overriding."
+  description = "Secret Manager version for the GitHub PAT. Empty uses projects/<project_number>/secrets/dataform-github-token/versions/latest. Do not put this in terraform.tfvars unless overriding."
   type        = string
   default     = ""
   sensitive   = true
@@ -73,13 +73,17 @@ resource "google_project_service_identity" "dataform" {
   depends_on = [google_project_service.apis]
 }
 
+data "google_project" "current" {
+  project_id = var.project_id
+}
+
 locals {
   dataform_sa = "serviceAccount:${google_project_service_identity.dataform.email}"
-  # Always attach Git. Empty tfvars token → standard secret path for this project.
+  # Console shows the numeric project number in the secret resource name.
   dataform_github_token_secret = (
     var.dataform_github_token_secret != ""
     ? var.dataform_github_token_secret
-    : "projects/${var.project_id}/secrets/dataform-github-token/versions/latest"
+    : "projects/${data.google_project.current.number}/secrets/dataform-github-token/versions/latest"
   )
   dataform_github_token_secret_id = regex(
     "secrets/([^/]+)/",
