@@ -1,12 +1,21 @@
 config {
-  type: "table",
+  type: "incremental",
   schema: "dwh_prod",
   name: "ulb_fraud_detection_woe_bins",
-  description: "Per-feature 10-bin WoE distribution for Looker Studio WoE plots",
-  tags: ["daily_batch"]
+  description: "Per-feature 10-bin WoE distribution for Looker Studio WoE plots (historical snapshots by evaluation_date)",
+  tags: ["daily_batch"],
+  protected: true,
+  bigquery: {
+    partitionBy: "evaluation_date"
+  }
 }
 
 -- SOP-MLOPS-2026-002 3.2: ビンごとの WoE（等頻度 10 ビン）
+-- 当日パーティションだけ差し替え、過去日は残す
+
+preOperations {
+  ${when(incremental(), require("includes/eval_history").deleteTodaySnapshot(self()))}
+}
 
 WITH typed AS (
   SELECT
@@ -66,7 +75,7 @@ bin_totals AS (
 )
 
 SELECT
-  CURRENT_DATE("Asia/Tokyo") AS evaluation_date,
+  ${require("includes/eval_history").EVALUATION_DATE_EXPR} AS evaluation_date,
   CURRENT_TIMESTAMP() AS evaluated_at,
   s.feature_name AS feature,
   s.bin_id,

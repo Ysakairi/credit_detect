@@ -1,12 +1,21 @@
 config {
-  type: "table",
+  type: "incremental",
   schema: "dwh_prod",
   name: "ulb_fraud_detection_cost_curve",
-  description: "Cost-sensitive expected loss by decision threshold for Looker Studio",
-  tags: ["daily_batch"]
+  description: "Cost-sensitive expected loss by decision threshold for Looker Studio (historical snapshots by evaluation_date)",
+  tags: ["daily_batch"],
+  protected: true,
+  bigquery: {
+    partitionBy: "evaluation_date"
+  }
 }
 
 -- SOP-MLOPS-2026-002 5.3: 閾値ごとの期待損失（Looker の折れ線用）
+-- 当日パーティションだけ差し替え、過去日は残す
+
+preOperations {
+  ${when(incremental(), require("includes/eval_history").deleteTodaySnapshot(self()))}
+}
 
 WITH pred AS (
   SELECT
@@ -45,7 +54,7 @@ cost_by_threshold AS (
 )
 
 SELECT
-  CURRENT_DATE("Asia/Tokyo") AS evaluation_date,
+  ${require("includes/eval_history").EVALUATION_DATE_EXPR} AS evaluation_date,
   CURRENT_TIMESTAMP() AS evaluated_at,
   threshold,
   fn_loss,

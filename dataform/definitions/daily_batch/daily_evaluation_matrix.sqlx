@@ -1,18 +1,29 @@
 config {
-  type: "table",
+  type: "incremental",
   schema: "dwh_prod",
   name: "ulb_fraud_detection_evaluation_matrix",
-  description: "Looker Studio model-level evaluation scorecard (SOP-MLOPS-2026-002)",
-  tags: ["daily_batch"]
+  description: "Looker Studio model-level evaluation scorecard (SOP-MLOPS-2026-002, historical snapshots by evaluation_date)",
+  tags: ["daily_batch"],
+  protected: true,
+  bigquery: {
+    partitionBy: "evaluation_date"
+  }
 }
 
 -- モデル単位メトリクスのロング形式。Looker Studio のスコアカード・時系列の主テーブル。
+-- 詳細テーブルは過去日を保持するため、当日分だけを読み、当日パーティションを差し替える。
+
+preOperations {
+  ${when(incremental(), require("includes/eval_history").deleteTodaySnapshot(self()))}
+}
 
 WITH evaluate AS (
   SELECT
     *
   FROM
     ${ref("ulb_fraud_detection_evaluation")}
+  WHERE
+    ${require("includes/eval_history").isToday()}
 ),
 
 imbalance AS (
@@ -20,6 +31,8 @@ imbalance AS (
     *
   FROM
     ${ref("ulb_fraud_detection_imbalance_metrics")}
+  WHERE
+    ${require("includes/eval_history").isToday()}
 ),
 
 psi AS (
@@ -30,6 +43,8 @@ psi AS (
     ANY_VALUE(psi_rating) AS psi_rating
   FROM
     ${ref("ulb_fraud_detection_psi")}
+  WHERE
+    ${require("includes/eval_history").isToday()}
   GROUP BY
     evaluation_date,
     evaluated_at
@@ -43,6 +58,8 @@ importance AS (
     ANY_VALUE(top5_gain_concentrated) AS top5_gain_concentrated
   FROM
     ${ref("ulb_fraud_detection_feature_importance")}
+  WHERE
+    ${require("includes/eval_history").isToday()}
   GROUP BY
     evaluation_date,
     evaluated_at
@@ -56,6 +73,8 @@ shap_audit AS (
     COUNTIF(is_audit_variable) AS audit_vars_present
   FROM
     ${ref("ulb_fraud_detection_global_explain")}
+  WHERE
+    ${require("includes/eval_history").isToday()}
   GROUP BY
     evaluation_date,
     evaluated_at
@@ -68,6 +87,8 @@ local_consistency AS (
     SAFE_DIVIDE(COUNTIF(direction_consistent), COUNT(*)) AS local_shap_consistency
   FROM
     ${ref("ulb_fraud_detection_local_explain")}
+  WHERE
+    ${require("includes/eval_history").isToday()}
   GROUP BY
     evaluation_date,
     evaluated_at
@@ -250,8 +271,10 @@ SELECT
   10
 FROM
   imbalance AS i
-CROSS JOIN
+INNER JOIN
   evaluate AS e
+ON
+  i.evaluation_date = e.evaluation_date
 
 UNION ALL
 
@@ -270,8 +293,10 @@ SELECT
   11
 FROM
   imbalance AS i
-CROSS JOIN
+INNER JOIN
   evaluate AS e
+ON
+  i.evaluation_date = e.evaluation_date
 
 UNION ALL
 
@@ -290,8 +315,10 @@ SELECT
   12
 FROM
   imbalance AS i
-CROSS JOIN
+INNER JOIN
   evaluate AS e
+ON
+  i.evaluation_date = e.evaluation_date
 
 UNION ALL
 
@@ -310,5 +337,7 @@ SELECT
   13
 FROM
   imbalance AS i
-CROSS JOIN
+INNER JOIN
   evaluate AS e
+ON
+  i.evaluation_date = e.evaluation_date

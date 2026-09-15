@@ -1,13 +1,22 @@
 config {
-  type: "table",
+  type: "incremental",
   schema: "dwh_prod",
   name: "ulb_fraud_detection_feature_importance",
-  description: "BQML Gain/Cover/Weight with SOP concentration and overfit flags",
+  description: "BQML Gain/Cover/Weight with SOP concentration and overfit flags (historical snapshots by evaluation_date)",
   tags: ["daily_batch"],
-  dependencies: ["ulb_fraud_detection_predictions"]
+  dependencies: ["ulb_fraud_detection_predictions"],
+  protected: true,
+  bigquery: {
+    partitionBy: "evaluation_date"
+  }
 }
 
 -- SOP-MLOPS-2026-002 4.1: ML.FEATURE_IMPORTANCE (Gain, Cover, Weight)
+-- 当日パーティションだけ差し替え、過去日は残す
+
+preOperations {
+  ${when(incremental(), require("includes/eval_history").deleteTodaySnapshot(self()))}
+}
 
 WITH raw AS (
   SELECT
@@ -35,7 +44,7 @@ concentration AS (
 )
 
 SELECT
-  CURRENT_DATE("Asia/Tokyo") AS evaluation_date,
+  ${require("includes/eval_history").EVALUATION_DATE_EXPR} AS evaluation_date,
   CURRENT_TIMESTAMP() AS evaluated_at,
   r.feature,
   r.importance_gain,

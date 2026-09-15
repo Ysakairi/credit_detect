@@ -130,6 +130,45 @@ class DataformSqlTest(unittest.TestCase):
         pkg = json.loads(read("dataform/package.json"))
         self.assertEqual(pkg["dependencies"]["@dataform/core"], "3.0.0")
 
+    LOOKER_HISTORY_SQLX = (
+        "daily_evaluation.sqlx",
+        "daily_feature_separation.sqlx",
+        "daily_woe_bins.sqlx",
+        "daily_feature_importance.sqlx",
+        "daily_global_explain.sqlx",
+        "daily_local_explain.sqlx",
+        "daily_imbalance_metrics.sqlx",
+        "daily_cost_curve.sqlx",
+        "daily_psi.sqlx",
+        "daily_evaluation_matrix.sqlx",
+        "daily_feature_matrix.sqlx",
+    )
+
+    def test_looker_eval_tables_keep_daily_history(self):
+        helper = read("dataform/includes/eval_history.js")
+        self.assertIn('CURRENT_DATE("Asia/Tokyo")', helper)
+        self.assertIn("DELETE FROM ${tableRef} WHERE evaluation_date", helper)
+        self.assertNotIn("reload_days", helper)
+        for name in self.LOOKER_HISTORY_SQLX:
+            text = read(f"dataform/definitions/daily_batch/{name}")
+            self.assertIn('type: "incremental"', text, msg=name)
+            self.assertIn("protected: true", text, msg=name)
+            self.assertIn('partitionBy: "evaluation_date"', text, msg=name)
+            self.assertIn("deleteTodaySnapshot(self())", text, msg=name)
+            self.assertIn('require("includes/eval_history")', text, msg=name)
+
+    def test_local_explain_uses_today_global_shap(self):
+        text = read("dataform/definitions/daily_batch/daily_local_explain.sqlx")
+        self.assertIn("isToday()", text)
+
+    def test_evaluation_matrix_joins_evaluate_on_date(self):
+        text = read(
+            "dataform/definitions/daily_batch/daily_evaluation_matrix.sqlx"
+        )
+        self.assertIn("i.evaluation_date = e.evaluation_date", text)
+        self.assertNotIn("CROSS JOIN", text)
+        self.assertIn("isToday()", text)
+
 
 class WorkflowTerraformTest(unittest.TestCase):
     def setUp(self):

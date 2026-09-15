@@ -1,14 +1,23 @@
 config {
-  type: "table",
+  type: "incremental",
   schema: "dwh_prod",
   name: "ulb_fraud_detection_local_explain",
-  description: "Local SHAP attributions for high-risk transactions (Looker-friendly unnested)",
-  tags: ["daily_batch"]
+  description: "Local SHAP attributions for high-risk transactions (Looker-friendly unnested, historical snapshots by evaluation_date)",
+  tags: ["daily_batch"],
+  protected: true,
+  bigquery: {
+    partitionBy: "evaluation_date"
+  }
 }
 
 -- SOP-MLOPS-2026-002 4.3: ML.EXPLAIN_PREDICT
 -- 不正確率 >= 0.85、または上位20件を説明対象とする
 -- ARRAY は Looker Studio で扱えないため UNNEST してフラット化する
+-- 当日パーティションだけ差し替え、過去日は残す
+
+preOperations {
+  ${when(incremental(), require("includes/eval_history").deleteTodaySnapshot(self()))}
+}
 
 WITH high_risk AS (
   SELECT
@@ -66,10 +75,12 @@ global_sign AS (
     SIGN(attribution) AS global_sign
   FROM
     ${ref("ulb_fraud_detection_global_explain")}
+  WHERE
+    ${require("includes/eval_history").isToday()}
 )
 
 SELECT
-  CURRENT_DATE("Asia/Tokyo") AS evaluation_date,
+  ${require("includes/eval_history").EVALUATION_DATE_EXPR} AS evaluation_date,
   CURRENT_TIMESTAMP() AS evaluated_at,
   e.Time,
   e.Amount,

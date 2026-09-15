@@ -69,7 +69,7 @@
 
 ### **C. 追加評価指標 (SOP-MLOPS-2026-002)**
 
-算出定義・判定基準・Looker Studio 用テーブルは [EVALUATE.md](EVALUATE.md) を参照。
+算出定義・判定基準・Looker Studio 用テーブルは [EVALUATE.md](EVALUATE.md) を参照。評価テーブルは `evaluation_date`（JST）単位で履歴を残す。スコアカードは最新日、推移チャートは日付軸で見る。
 
 **① 分布乖離・判別力 (Distribution Separation)**
 

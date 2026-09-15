@@ -1,14 +1,23 @@
 config {
-  type: "table",
+  type: "incremental",
   schema: "dwh_prod",
   name: "ulb_fraud_detection_global_explain",
-  description: "Tree SHAP global attributions for the fraud class (ML.GLOBAL_EXPLAIN)",
+  description: "Tree SHAP global attributions for the fraud class (ML.GLOBAL_EXPLAIN, historical snapshots by evaluation_date)",
   tags: ["daily_batch"],
-  dependencies: ["ulb_fraud_detection_predictions"]
+  dependencies: ["ulb_fraud_detection_predictions"],
+  protected: true,
+  bigquery: {
+    partitionBy: "evaluation_date"
+  }
 }
 
 -- SOP-MLOPS-2026-002 4.2: ML.GLOBAL_EXPLAIN (Tree SHAP)
 -- 要 ENABLE_GLOBAL_EXPLAIN = TRUE（initial_detection_model.sqlx）
+-- 当日パーティションだけ差し替え、過去日は残す
+
+preOperations {
+  ${when(incremental(), require("includes/eval_history").deleteTodaySnapshot(self()))}
+}
 
 WITH shap AS (
   SELECT
@@ -27,7 +36,7 @@ WITH shap AS (
 )
 
 SELECT
-  CURRENT_DATE("Asia/Tokyo") AS evaluation_date,
+  ${require("includes/eval_history").EVALUATION_DATE_EXPR} AS evaluation_date,
   CURRENT_TIMESTAMP() AS evaluated_at,
   feature,
   attribution,

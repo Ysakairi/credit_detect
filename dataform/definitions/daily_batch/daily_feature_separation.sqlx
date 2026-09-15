@@ -1,14 +1,23 @@
 config {
-  type: "table",
+  type: "incremental",
   schema: "dwh_prod",
   name: "ulb_fraud_detection_feature_separation",
-  description: "Per-feature KS, IV, Cliff's Delta, and Z-score difference with SOP-MLOPS-2026-002 ratings",
+  description: "Per-feature KS, IV, Cliff's Delta, and Z-score difference with SOP-MLOPS-2026-002 ratings (historical snapshots by evaluation_date)",
   tags: ["daily_batch"],
-  dependencies: ["ulb_fraud_detection_daily_converted"]
+  dependencies: ["ulb_fraud_detection_daily_converted"],
+  protected: true,
+  bigquery: {
+    partitionBy: "evaluation_date"
+  }
 }
 
 -- SOP-MLOPS-2026-002 第3章: 陽性・陰性集団の統計的乖離評価
 -- Looker Studio: 特徴量ごとの棒グラフ / スコアカード向けワイドテーブル
+-- 当日パーティションだけ差し替え、過去日は残す
+
+preOperations {
+  ${when(incremental(), require("includes/eval_history").deleteTodaySnapshot(self()))}
+}
 
 WITH typed AS (
   SELECT
@@ -164,7 +173,7 @@ iv AS (
 )
 
 SELECT
-  CURRENT_DATE("Asia/Tokyo") AS evaluation_date,
+  ${require("includes/eval_history").EVALUATION_DATE_EXPR} AS evaluation_date,
   CURRENT_TIMESTAMP() AS evaluated_at,
   k.feature_name AS feature,
   k.ks_statistic,

@@ -1,9 +1,13 @@
 config {
-  type: "table",
+  type: "incremental",
   schema: "dwh_prod",
   name: "ulb_fraud_detection_psi",
-  description: "Population Stability Index vs training score distribution with SOP traffic-light rating",
-  tags: ["daily_batch"]
+  description: "Population Stability Index vs training score distribution with SOP traffic-light rating (historical snapshots by evaluation_date)",
+  tags: ["daily_batch"],
+  protected: true,
+  bigquery: {
+    partitionBy: "evaluation_date"
+  }
 }
 
 -- SOP-MLOPS-2026-002 第6章: PSI（10 均等幅ビン, スコア [0, 1]）
@@ -11,6 +15,11 @@ config {
 -- （Workflows が transitiveDependenciesIncluded のため、ref すると毎回 train が走る）。
 -- ベースラインは学習スコアの ML.PREDICT。公開データは静的なので日次で安定する。
 -- 空ビン 0.0001 は ln(0) 回避。IAM は Dataform SA（jobUser + dataEditor）。
+-- 当日パーティションだけ差し替え、過去日は残す
+
+preOperations {
+  ${when(incremental(), require("includes/eval_history").deleteTodaySnapshot(self()))}
+}
 
 WITH train_pred AS (
   SELECT
@@ -137,7 +146,7 @@ psi_bins AS (
 )
 
 SELECT
-  CURRENT_DATE("Asia/Tokyo") AS evaluation_date,
+  ${require("includes/eval_history").EVALUATION_DATE_EXPR} AS evaluation_date,
   CURRENT_TIMESTAMP() AS evaluated_at,
   bin_id,
   baseline_pct,
