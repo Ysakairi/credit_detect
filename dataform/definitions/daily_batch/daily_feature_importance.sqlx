@@ -4,7 +4,7 @@ config {
   name: "ulb_fraud_detection_feature_importance",
   description: "BQML Gain/Cover/Weight with SOP concentration and overfit flags",
   tags: ["daily_batch"],
-  dependencies: ["ulb_fraud_detection_predictions"]
+  dependencies: ["ulb_fraud_detection_predictions", "v_detection_feature_importance"]
 }
 
 -- SOP-MLOPS-2026-002 4.1: ML.FEATURE_IMPORTANCE (Gain, Cover, Weight)

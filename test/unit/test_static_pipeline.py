@@ -109,6 +109,46 @@ class DataformSqlTest(unittest.TestCase):
         self.assertIn('"V17"', text)
         self.assertIn('"V12"', text)
 
+    LOOKER_HISTORY_TABLES = {
+        "ulb_fraud_detection_evaluation": "v_detection_evaluation",
+        "ulb_fraud_detection_feature_separation": "v_detection_feature_separation",
+        "ulb_fraud_detection_woe_bins": "v_detection_woe_bins",
+        "ulb_fraud_detection_feature_importance": "v_detection_feature_importance",
+        "ulb_fraud_detection_global_explain": "v_detection_global_explain",
+        "ulb_fraud_detection_local_explain": "v_detection_local_explain",
+        "ulb_fraud_detection_imbalance_metrics": "v_detection_imbalance_metrics",
+        "ulb_fraud_detection_cost_curve": "v_detection_cost_curve",
+        "ulb_fraud_detection_psi": "v_detection_psi",
+    }
+
+    def test_history_backup_sqlx_before_daily_replace(self):
+        backup_js = read("dataform/includes/backup.js")
+        self.assertIn("CREATE TABLE IF NOT EXISTS", backup_js)
+        self.assertIn("INFORMATION_SCHEMA.TABLES", backup_js)
+        self.assertIn("evaluation_date", backup_js)
+
+        evaluate_md = read("EVALUATE.md")
+        daily_dir = ROOT / "dataform" / "definitions" / "daily_batch"
+        for source, backup in self.LOOKER_HISTORY_TABLES.items():
+            path = daily_dir / f"{backup}.sqlx"
+            self.assertTrue(path.exists(), msg=f"missing {path.name}")
+            text = path.read_text(encoding="utf-8")
+            self.assertIn('type: "operations"', text)
+            self.assertIn(f'name: "{backup}"', text)
+            self.assertIn('tags: ["daily_batch"]', text)
+            self.assertIn(f'"{source}"', text)
+            self.assertNotIn(f'ref("{source}")', text)
+            self.assertIn(f"`{backup}`", evaluate_md)
+
+            daily_matches = [
+                p
+                for p in daily_dir.glob("daily_*.sqlx")
+                if f'name: "{source}"' in p.read_text(encoding="utf-8")
+            ]
+            self.assertEqual(len(daily_matches), 1, msg=source)
+            daily_text = daily_matches[0].read_text(encoding="utf-8")
+            self.assertIn(f'"{backup}"', daily_text)
+
     def test_dataform_project_consistency(self):
         settings = read("dataform/workflow_settings.yaml")
         project = re.search(r"^defaultProject:\s*(\S+)", settings, re.M).group(1)
@@ -302,6 +342,8 @@ class WorkflowTerraformTest(unittest.TestCase):
                 if path.is_dir() or path.suffix in {".png", ".pyc"}:
                     continue
                 if path.name.startswith("test_"):
+                    continue
+                if "node_modules" in path.parts:
                     continue
                 try:
                     text = path.read_text(encoding="utf-8")

@@ -34,7 +34,7 @@
 
 ## 2. Looker Studio 向けテーブル
 
-日次バッチ（`daily_batch`）が `dwh_prod` に CREATE OR REPLACE する。すべての評価テーブルに `evaluation_date`（Asia/Tokyo）と `evaluated_at` を付与する。
+日次バッチ（`daily_batch`）が `dwh_prod` に CREATE OR REPLACE する。すべての評価テーブルに `evaluation_date`（Asia/Tokyo）と `evaluated_at` を付与する。当日表示用のテーブルは 1 日分のまま残し、置換直前に現行行を `v_detection_*` へ退避して過去分を蓄積する。
 
 ### 2.1 ダッシュボードの主テーブル（ロング形式）
 
@@ -81,6 +81,31 @@ Looker Studio 推奨チャート:
 - 損益曲線: `cost_curve` の `threshold` × `expected_loss`（`is_optimal_threshold` で P* を強調）
 - PSI 内訳: `psi` の `bin_id` × `psi_contribution`
 - 局所説明: `local_explain` を取引キーでフィルタ
+
+### 2.3 履歴バックアップ（`v_detection_*`）
+
+当日表示用の `ulb_fraud_detection_*` は従来どおり CREATE OR REPLACE する。過去分は日次バッチの置換 **前** に、現行テーブルを同スキーマのバックアップへ `INSERT` する。バックアップテーブルは sqlx の `CREATE TABLE IF NOT EXISTS` で初回作成する。
+
+| 当日テーブル | バックアップテーブル |
+| --- | --- |
+| `ulb_fraud_detection_evaluation` | `v_detection_evaluation` |
+| `ulb_fraud_detection_feature_separation` | `v_detection_feature_separation` |
+| `ulb_fraud_detection_woe_bins` | `v_detection_woe_bins` |
+| `ulb_fraud_detection_feature_importance` | `v_detection_feature_importance` |
+| `ulb_fraud_detection_global_explain` | `v_detection_global_explain` |
+| `ulb_fraud_detection_local_explain` | `v_detection_local_explain` |
+| `ulb_fraud_detection_imbalance_metrics` | `v_detection_imbalance_metrics` |
+| `ulb_fraud_detection_cost_curve` | `v_detection_cost_curve` |
+| `ulb_fraud_detection_psi` | `v_detection_psi` |
+
+- 命名: `ulb_fraud_detection_XXXXX` → `v_detection_XXXXX`
+- スキーマ: 当日テーブルと同一（余分な列は足さない）
+- 粒度: `evaluation_date` 単位。既に同じ評価日がある行は再挿入しない
+- 初回: 当日テーブルがまだ無い場合はバックアップをスキップする。履歴は翌日の置換前から貯まる
+- 当日を含む時系列: バックアップ（過去日）と当日テーブルを UNION する
+- 適用: Dataform ワークスペースで Git の再取得（pull）と再コンパイルが必要
+
+`evaluation_matrix` / `feature_matrix` は本バックアップの対象外（当日スコアカード用）。
 
 ---
 
@@ -267,3 +292,5 @@ $$
 2. 特徴量乖離指標は当日バッチ（1 疑似日）で算出するため、陽性が極端に少ない日は IV / KS が不安定になる。その場合は rating と併せて `n_pos`（`ulb_fraud_detection_imbalance_metrics`）を確認する。
 3. PSI のベースラインは学習テーブルを直接参照する（Dataform `ref` には載せない）。学習テーブルが無い環境では当該アクションは失敗する。
 4. 既存の `ulb_fraud_detection_evaluation` は後方互換のため残し、`evaluation_date` / `evaluated_at` のみ追加している。
+5. 詳細テーブル（節 2.2）は CREATE OR REPLACE のため当日 1 日分のみ残る。過去分は置換前に `v_detection_*` へ退避する（節 2.3）。バックアップ sqlx はソースを `ref()` せず、当日テーブル側がバックアップ完了に依存する。
+6. バックアップ sqlx を追加したあとは、Dataform ワークスペースでリモートから pull し、再コンパイルしてから `daily_batch` を実行する。スキーマを変えた当日テーブルがある場合は、対応する `v_detection_*` を DROP してから再実行する。

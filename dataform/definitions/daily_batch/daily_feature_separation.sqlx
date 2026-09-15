@@ -4,7 +4,7 @@ config {
   name: "ulb_fraud_detection_feature_separation",
   description: "Per-feature KS, IV, Cliff's Delta, and Z-score difference with SOP-MLOPS-2026-002 ratings",
   tags: ["daily_batch"],
-  dependencies: ["ulb_fraud_detection_daily_converted"]
+  dependencies: ["ulb_fraud_detection_daily_converted", "v_detection_feature_separation"]
 }
 
 -- SOP-MLOPS-2026-002 第3章: 陽性・陰性集団の統計的乖離評価

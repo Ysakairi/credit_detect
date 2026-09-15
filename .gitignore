@@ -21,3 +21,4 @@ dist/
 build/
 
 test/results/*.txt
+node_modules/

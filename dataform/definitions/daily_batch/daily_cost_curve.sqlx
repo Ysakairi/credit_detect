@@ -3,7 +3,8 @@ config {
   schema: "dwh_prod",
   name: "ulb_fraud_detection_cost_curve",
   description: "Cost-sensitive expected loss by decision threshold for Looker Studio",
-  tags: ["daily_batch"]
+  tags: ["daily_batch"],
+  dependencies: ["v_detection_cost_curve"]
 }
 
 -- SOP-MLOPS-2026-002 5.3: 閾値ごとの期待損失（Looker の折れ線用）

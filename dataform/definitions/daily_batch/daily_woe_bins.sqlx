@@ -3,7 +3,8 @@ config {
   schema: "dwh_prod",
   name: "ulb_fraud_detection_woe_bins",
   description: "Per-feature 10-bin WoE distribution for Looker Studio WoE plots",
-  tags: ["daily_batch"]
+  tags: ["daily_batch"],
+  dependencies: ["v_detection_woe_bins"]
 }
 
 -- SOP-MLOPS-2026-002 3.2: ビンごとの WoE（等頻度 10 ビン）

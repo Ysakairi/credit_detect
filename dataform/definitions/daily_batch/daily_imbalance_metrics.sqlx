@@ -3,7 +3,8 @@ config {
   schema: "dwh_prod",
   name: "ulb_fraud_detection_imbalance_metrics",
   description: "PR-AUC, Top-K capture rate, and cost-sensitive expected loss with SOP ratings",
-  tags: ["daily_batch"]
+  tags: ["daily_batch"],
+  dependencies: ["v_detection_imbalance_metrics"]
 }
 
 -- SOP-MLOPS-2026-002 第5章: 不均衡データ特有の予測性能とビジネス損失

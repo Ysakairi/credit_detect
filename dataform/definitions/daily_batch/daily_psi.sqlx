@@ -3,7 +3,8 @@ config {
   schema: "dwh_prod",
   name: "ulb_fraud_detection_psi",
   description: "Population Stability Index vs training score distribution with SOP traffic-light rating",
-  tags: ["daily_batch"]
+  tags: ["daily_batch"],
+  dependencies: ["v_detection_psi"]
 }
 
 -- SOP-MLOPS-2026-002 第6章: PSI（10 均等幅ビン, スコア [0, 1]）
