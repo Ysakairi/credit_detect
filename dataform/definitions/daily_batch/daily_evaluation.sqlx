@@ -4,7 +4,7 @@ config {
   name: "ulb_fraud_detection_evaluation",
   description: "Daily model evaluation metrics on the batch slice",
   tags: ["daily_batch"],
-  dependencies: ["ulb_fraud_detection_predictions"]
+  dependencies: ["ulb_fraud_detection_predictions", "v_detection_evaluation"]
 }
 
 -- 日次バッチ(4) モデル評価指標テーブルの作成

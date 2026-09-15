@@ -1,0 +1,18 @@
+config {
+  type: "operations",
+  schema: "dwh_prod",
+  name: "v_detection_imbalance_metrics",
+  description: "Historical rows of ulb_fraud_detection_imbalance_metrics, appended before daily CREATE OR REPLACE",
+  hasOutput: true,
+  tags: ["daily_batch"]
+}
+
+-- 日次バッチが ulb_fraud_detection_imbalance_metrics を置換する前に現行行を退避する。
+-- ソースは ref() しない（ref すると置換が先に走り、退避対象が消える）。
+
+${require("includes/backup").snapshotSql(
+  "ulb_fraud_detection_imbalance_metrics",
+  dataform.projectConfig.defaultDatabase,
+  dataform.projectConfig.defaultSchema,
+  self()
+)}

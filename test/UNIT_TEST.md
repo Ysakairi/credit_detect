@@ -91,6 +91,7 @@ Google Cloud へ `main` をデプロイする前に、Cloud Run Job・評価カ�
 | UT-DF-15 | Dataform core | `package.json` | `@dataform/core` がピンされている | 同上 |
 | UT-DF-16 | 旧設定ファイル不在 | `dataform.json` | Dataform core 3.0 では `workflow_settings.yaml` と併用できないためファイルが無い | 同上 |
 | UT-DF-17 | 公開データのローカルコピー | `ulb_fraud_detection_public.sqlx` | `type: "declaration"`。`initial_converted` は `bigquery-public-data` を直接参照しない | 同上 |
+| UT-DF-18 | Looker 履歴バックアップ | `v_detection_*.sqlx` | 対象 9 テーブルが `CREATE TABLE IF NOT EXISTS` の operations。ソースを `ref()` せず、当日テーブルがバックアップ完了に依存する | 同上 |
 
 ### 4.4 Workflows / Terraform / Dockerfile（静的）
 

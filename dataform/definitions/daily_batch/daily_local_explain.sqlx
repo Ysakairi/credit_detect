@@ -3,7 +3,8 @@ config {
   schema: "dwh_prod",
   name: "ulb_fraud_detection_local_explain",
   description: "Local SHAP attributions for high-risk transactions (Looker-friendly unnested)",
-  tags: ["daily_batch"]
+  tags: ["daily_batch"],
+  dependencies: ["v_detection_local_explain"]
 }
 
 -- SOP-MLOPS-2026-002 4.3: ML.EXPLAIN_PREDICT
