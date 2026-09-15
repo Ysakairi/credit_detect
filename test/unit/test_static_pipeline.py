@@ -243,9 +243,10 @@ class WorkflowTerraformTest(unittest.TestCase):
         self.assertIn("git_remote_settings {", self.tf)
         self.assertIn('default_branch                      = "main"', self.tf)
         self.assertIn(
-            'projects/${var.project_id}/secrets/dataform-github-token/versions/latest',
+            "projects/${data.google_project.current.number}/secrets/dataform-github-token/versions/latest",
             self.tf,
         )
+        self.assertIn('data "google_project" "current"', self.tf)
         self.assertIn("google_secret_manager_secret_iam_member.dataform_github_token_accessor", self.tf)
 
     def test_dataform_secret_accessor_iam(self):
