@@ -52,7 +52,7 @@ variable "dataform_git_url" {
 }
 
 variable "dataform_github_token_secret" {
-  description = "Secret Manager version resource name for the GitHub PAT used by Dataform (projects/.../secrets/.../versions/...). Empty skips Git on create; later applies do not clear an existing console Git link."
+  description = "Secret Manager version for the GitHub PAT. Empty uses projects/<project_id>/secrets/dataform-github-token/versions/latest. Do not put this in terraform.tfvars unless overriding."
   type        = string
   default     = ""
   sensitive   = true
@@ -62,7 +62,7 @@ variable "dataform_github_token_secret" {
       "^projects/[^/]+/secrets/[^/]+/versions/[^/]+$",
       var.dataform_github_token_secret,
     ))
-    error_message = "dataform_github_token_secret must be empty or a Secret Manager version name (projects/.../secrets/.../versions/...)."
+    error_message = "dataform_github_token_secret must be empty (use the default dataform-github-token secret) or a Secret Manager version name (projects/.../secrets/.../versions/...)."
   }
 }
 
@@ -75,10 +75,15 @@ resource "google_project_service_identity" "dataform" {
 
 locals {
   dataform_sa = "serviceAccount:${google_project_service_identity.dataform.email}"
-  # Empty token → try() returns "" so the IAM binding is skipped.
-  dataform_github_token_secret_id = try(
-    regex("secrets/([^/]+)/", var.dataform_github_token_secret),
-    "",
+  # Always attach Git. Empty tfvars token → standard secret path for this project.
+  dataform_github_token_secret = (
+    var.dataform_github_token_secret != ""
+    ? var.dataform_github_token_secret
+    : "projects/${var.project_id}/secrets/dataform-github-token/versions/latest"
+  )
+  dataform_github_token_secret_id = regex(
+    "secrets/([^/]+)/",
+    local.dataform_github_token_secret,
   )
   apis = [
     "bigquery.googleapis.com",
@@ -250,6 +255,16 @@ resource "google_cloud_run_v2_job_iam_member" "workflows_job_developer" {
 # ==========================================
 # 4. Dataform リポジトリ
 # ==========================================
+resource "google_secret_manager_secret_iam_member" "dataform_github_token_accessor" {
+  project   = var.project_id
+  secret_id = local.dataform_github_token_secret_id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = local.dataform_sa
+  depends_on = [
+    google_project_service_identity.dataform,
+  ]
+}
+
 resource "google_dataform_repository" "fraud_pipeline_repo" {
   provider     = google-beta
   project      = var.project_id
@@ -259,39 +274,16 @@ resource "google_dataform_repository" "fraud_pipeline_repo" {
   depends_on = [
     google_project_service.apis,
     google_project_service_identity.dataform,
+    google_secret_manager_secret_iam_member.dataform_github_token_accessor,
   ]
 
-  # Token set: attach Git on create. Token empty: create without Git, then
-  # connect in the console (README ⑥ B).
-  dynamic "git_remote_settings" {
-    for_each = var.dataform_github_token_secret == "" ? [] : [1]
-    content {
-      url                                 = var.dataform_git_url
-      default_branch                      = "main"
-      authentication_token_secret_version = var.dataform_github_token_secret
-    }
+  # Always set Git so apply cannot leave the repo unlinked. Defaults match
+  # the production remote (credit_detect_dataform / main / dataform-github-token).
+  git_remote_settings {
+    url                                 = var.dataform_git_url
+    default_branch                      = "main"
+    authentication_token_secret_version = local.dataform_github_token_secret
   }
-
-  # Apply with an empty token used to PATCH-clear git_remote_settings and
-  # unlink Git. Daily compile then fails with "git reference 'main' could
-  # not be resolved". Ignore updates so console- or create-time Git survives.
-  lifecycle {
-    ignore_changes = [git_remote_settings]
-  }
-}
-
-# Terraform-managed Git needs the Dataform SA to read the PAT secret.
-# Console linking still needs the same binding (README ⑥ step 3) if this
-# resource is skipped because the token variable is empty.
-resource "google_secret_manager_secret_iam_member" "dataform_github_token_accessor" {
-  count     = local.dataform_github_token_secret_id == "" ? 0 : 1
-  project   = var.project_id
-  secret_id = local.dataform_github_token_secret_id
-  role      = "roles/secretmanager.secretAccessor"
-  member    = local.dataform_sa
-  depends_on = [
-    google_project_service_identity.dataform,
-  ]
 }
 
 # ==========================================

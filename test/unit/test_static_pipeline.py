@@ -237,19 +237,24 @@ class WorkflowTerraformTest(unittest.TestCase):
         self.assertIn("credit_detect_dataform.git", example)
         self.assertNotIn("credit_detect.git", example)
 
-    def test_dataform_git_remote_not_cleared_on_apply(self):
-        """トークン空の apply がコンソールの Git 接続を PATCH で消さない。"""
-        self.assertIn("ignore_changes = [git_remote_settings]", self.tf)
-        repo_block = self.tf.split('resource "google_dataform_repository"')[1]
-        repo_block = repo_block.split('resource "')[0]
-        self.assertIn("lifecycle", repo_block)
-        self.assertIn("ignore_changes", repo_block)
+    def test_dataform_git_remote_always_attached(self):
+        """apply が Git を常に宣言し、空トークンで接続を消さない。"""
+        self.assertNotIn("ignore_changes = [git_remote_settings]", self.tf)
+        self.assertIn("git_remote_settings {", self.tf)
+        self.assertIn('default_branch                      = "main"', self.tf)
+        self.assertIn(
+            'projects/${var.project_id}/secrets/dataform-github-token/versions/latest',
+            self.tf,
+        )
+        self.assertIn("google_secret_manager_secret_iam_member.dataform_github_token_accessor", self.tf)
 
     def test_dataform_secret_accessor_iam(self):
         self.assertIn("google_secret_manager_secret_iam_member", self.tf)
         self.assertIn("dataform_github_token_accessor", self.tf)
         self.assertIn("roles/secretmanager.secretAccessor", self.tf)
         self.assertIn("dataform_github_token_secret_id", self.tf)
+        accessor = self.tf.split("dataform_github_token_accessor")[1].split("resource ")[0]
+        self.assertNotIn("count", accessor)
 
     def test_run_jobs_iam(self):
         self.assertIn("roles/bigquery.dataEditor", self.tf)

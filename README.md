@@ -132,7 +132,7 @@
 
 # 7. 事前準備
 
-**① clone → ② 単体テスト → ③ Artifact Registry / イメージ → ④ tfvars → ⑤ terraform apply → ⑥ Dataform の Git 接続 → ⑦ `initial_setup` → ⑧ 結合試験**
+**① clone → ② 単体テスト → ③ Artifact Registry / イメージ → ④ tfvars → ⑥ PAT シークレット作成 → ⑤ terraform apply（Git 接続込み） → ⑦ `initial_setup` → ⑧ 結合試験**
 
 
 ## 事前に揃えるもの
@@ -288,13 +288,19 @@ cp example.tfvars terraform.tfvars
 project_id = "YOUR_PROJECT_ID"
 region     = "asia-northeast1"
 repo_docker = "my-repo"
-
-# Dataform を Terraform で Git 接続する場合（⑥と一体でやるなら）
-# dataform_git_url             = "https://github.com/Ysakairi/credit_detect_dataform.git"
-# dataform_github_token_secret = "projects/YOUR_PROJECT_ID/secrets/dataform-github-token/versions/latest"
 ```
 
-`dataform_github_token_secret` を空のまま apply すると、**新規作成時**は Git 未接続になります。その場合は apply 後にコンソールで接続します（⑥ B）。既にコンソールで繋いだ Git は、トークン空の apply でも外れません（`git_remote_settings` は `ignore_changes`）。既定の Git URL は `credit_detect_dataform` です。`credit_detect` 本体は指定できません。
+**Dataform の Git URL / ブランチ / トークン版は `terraform.tfvars` に書かない。** `main.tf` の既定が本番と同じ値です。
+
+| 項目 | 既定（`main.tf`） |
+| --- | --- |
+| リポジトリ ソース | `https://github.com/Ysakairi/credit_detect_dataform.git` |
+| デフォルト ブランチ | `main` |
+| シークレット トークン | `projects/<project_id>/secrets/dataform-github-token/versions/latest` |
+
+`<project_id>` は上の `project_id` から入ります。`credit_detect` 本体は validation で拒否されます。上書きが必要なときだけ `dataform_git_url` / `dataform_github_token_secret` を tfvars に足します。
+
+apply はシークレット `dataform-github-token` が無いと Git 接続で失敗します。⑤の前に ⑥ の PAT とシークレット作成を済ませてください。
 
 ---
 
@@ -369,6 +375,8 @@ terraform apply -var-file=terraform.tfvars
 
 apply 直後から Scheduler が生きます。モデル未作成の 02:00 に走ると `daily_batch` の `ML.PREDICT` が失敗します。⑦が終わるまで Scheduler を一時停止するか、apply 直後に ⑦⑨ まで進めてください。
 
+Dataform リポジトリは apply 時に Git 接続します（既定は `credit_detect_dataform` の `main`）。シークレットが無い、または Dataform SA が読めないと apply が失敗します。
+
 ```bash
 gcloud scheduler jobs pause daily-fraud-pipeline-trigger --location=asia-northeast1
 ```
@@ -387,7 +395,9 @@ gcloud dataform repositories list --region=asia-northeast1
 
 連携先は **sqlx がルートにあるリポジトリ**（`credit_detect_dataform`）です。`credit_detect` 本体ではありません。
 
-HTTPS で Git 接続する場合、コンソールに PAT を直接貼る欄はありません。**Secret Manager のシークレットが必須**です。未作成だと「シークレットが必要」で進めません。SSH や Developer Connect は本手順では使いません。
+**Git 接続そのものは Terraform が行います。** `terraform.tfvars` に URL やトークン版を書く必要はありません（④の既定表）。この節で作るのは PAT と Secret Manager の `dataform-github-token` です。**⑤の apply より先に**シークレットを作ってください。
+
+HTTPS で Git 接続する場合、コンソールに PAT を直接貼る欄はありません。**Secret Manager のシークレットが必須**です。SSH や Developer Connect は本手順では使いません。
 
 ### 1. GitHub PAT を発行する
 
@@ -417,7 +427,7 @@ SAML SSO を使っている組織なら、発行後に token を Authorize す�
 3. シークレットの値: PAT を貼る
 4. 作成
 
-Secret Manager API が未有効なら、⑤ の apply 後か次で有効化する。
+Secret Manager API が未有効なら、先に有効化します（⑤の apply でも有効化しますが、シークレット作成が apply より前なのでここでも可）。
 
 ```bash
 gcloud services enable secretmanager.googleapis.com
@@ -437,7 +447,7 @@ echo -n "ghp_...." | gcloud secrets versions add dataform-github-token --data-fi
 
 ### 3. Dataform サービスエージェントに読み取りを付与する
 
-`terraform.tfvars` に `dataform_github_token_secret` を書いて apply すると、Terraform がこの IAM を付けます。トークン変数が空のままコンソールだけで繋ぐ場合は、次を手動で実行します。シークレットを Dataform が読めないと、接続画面のドロップダウンに出てもリンク後に失敗します。
+Terraform apply（⑤）が `secretAccessor` を Dataform SA に付けます。apply 前の手動確認や、apply できないときの応急は次です。シークレットを Dataform が読めないと Git 接続に失敗します。
 
 ```bash
 PROJECT_ID="$(gcloud config get-value project)"
@@ -449,18 +459,26 @@ gcloud secrets add-iam-policy-binding dataform-github-token \
 
 **コンソール**なら Secret Manager → `dataform-github-token` → 権限 → アクセスを許可。プリンシパルに `service-PROJECT_NUMBER@gcp-sa-dataform.iam.gserviceaccount.com`、ロールは **Secret Manager シークレット アクセサー**。
 
-### A. Terraform で接続する場合
+### A. Terraform で接続する（通常はこれ）
 
-**新規作成時**に `terraform.tfvars` へ URL とシークレット版を書いて apply する。`git_remote_settings` は作成後の差分を無視するため、既存リポジトリへ Git を後付けする目的で apply し直しても接続は付きません。既に外れている接続の復旧は **B. コンソール** で行います。
+`terraform.tfvars` に Git 項目は書かない。⑤ の apply が次を設定します。
+
+| 項目 | 値 |
+| --- | --- |
+| リポジトリ ソース | `https://github.com/Ysakairi/credit_detect_dataform.git` |
+| デフォルトのブランチ名 | `main` |
+| シークレット トークン | `projects/<project_id>/secrets/dataform-github-token/versions/latest` |
+
+既にコンソール接続が外れている場合も、この apply で付け直せます（以前の空トークン apply が接続を消していた挙動は、Git を常に宣言するように変えて止めています）。
+
+上書きするときだけ tfvars に書きます。URL にユーザー名や PAT を含めない。末尾は `.git`。`credit_detect.git` は validation で拒否されます。
 
 ```hcl
 dataform_git_url             = "https://github.com/Ysakairi/credit_detect_dataform.git"
 dataform_github_token_secret = "projects/YOUR_PROJECT_ID/secrets/dataform-github-token/versions/latest"
 ```
 
-URL にユーザー名や PAT を含めない。末尾は `.git`。`credit_detect.git` は validation で拒否されます。
-
-### B. コンソールで接続する場合
+### B. コンソールで確認・応急接続する場合
 
 1. BigQuery → Dataform → `fraud-pipeline-repo`
 2. **設定 → Git と接続**（Connect with Git）
@@ -710,7 +728,7 @@ gcloud run jobs execute daily-ingest-job --region=asia-northeast1 --wait
 - `--tag` のプロジェクト ID がプレースホルダのまま → ① の `gcloud config` と一致させる
 - ⑦より先に Workflows を回す → モデルなしで `ML.PREDICT` 失敗
 - Dataform が `credit_detect` 本体を向いている → sqlx がコンパイルされない
-- `The git reference 'main' could not be resolved` → 日次 Workflow の `gitCommitish: main` が Git 未接続（または PAT 無効）で 400。コンソールで `credit_detect_dataform` の `main` に再接続する。トークン空の `terraform apply` が接続を消す挙動は `ignore_changes` で止めてある
+- `The git reference 'main' could not be resolved` → Dataform Git 未接続または PAT 無効。シークレット `dataform-github-token` があることを確認し、⑤ を apply して `credit_detect_dataform` の `main` を付け直す。コンソール応急は ⑥ B
 - イメージ未プッシュ → Job が Image not found
 - `workflow_settings.yaml` の `defaultProject` が違う → 別プロジェクトに表が立つ / 権限エラー
 - 公開表を Dataform が直接読む → `Access Denied: Table bigquery-public-data:ml_datasets.ulb_fraud_detection`（US と asia-northeast1 の跨ぎ + SA 権限）。⑦の IAM 付与と `copy_public_source.py` を先に行う
@@ -728,8 +746,8 @@ gcloud run jobs execute daily-ingest-job --region=asia-northeast1 --wait
 | ① clone | `main` を取る |
 | ② 単体テスト | `evaluate/` と `batch_app/` の 2 系統 |
 | ③ AR 登録 | Compute デフォルト SA に Storage / Logging / AR 権限 + **`batch_app/` から** Cloud Build |
-| ④ プロジェクト情報 | **`terraform.tfvars`。`main.tf` は触らない** |
-| ⑤ terraform | 先に Service Usage / Resource Manager / Dataform identity を gcloud で用意。Scheduler が即時有効。**トークン空の apply でも既存 Dataform Git は外さない** |
-| ⑥ Dataform Git | 接続先は `credit_detect_dataform`。HTTPS は Secret Manager の PAT + Dataform SA の `secretAccessor` |
+| ④ プロジェクト情報 | **`terraform.tfvars` は `project_id` など。Git URL / トークンは書かない（`main.tf` 既定）** |
+| ⑤ terraform | 先に Service Usage / Resource Manager / Dataform identity と **`dataform-github-token`**。apply が Dataform Git を接続する |
+| ⑥ Dataform Git | PAT とシークレット作成は **⑤より前**。接続先は `credit_detect_dataform` / `main` |
 | ⑦ 初回 sqlx | Dataform SA の BQ IAM + 公開表を `dwh_prod` へコピー。ワークスペース ID `initial-setup` を作成してコンパイル。タグ `initial_setup` |
 | ⑧ 結合試験 | Workflows を 1 回手動実行 |
