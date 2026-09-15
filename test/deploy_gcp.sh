@@ -69,7 +69,7 @@ echo
 echo "デプロイ完了。"
 echo "次の手順:"
 echo "  1. workflow_settings.yaml の defaultProject を ${PROJECT_ID} と一致させる（dataform.json は置かない）"
-echo "  2. Dataform を GitHub 連携している場合は compilation が gitCommitish=main を取れること"
+echo "  2. Dataform が credit_detect_dataform の main に Git 接続されていること（gitCommitish=main）"
 echo "  3. 初回のみ Dataform タグ initial_setup を実行して BQML モデルを作成する"
 echo "  4. ./test/run_integration_tests.sh で結合試験"
 echo "  5. 日次パイプライン全体は RUN_WORKFLOW=1 または Cloud Scheduler 02:00 JST"

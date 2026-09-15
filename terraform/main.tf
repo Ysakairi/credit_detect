@@ -41,16 +41,29 @@ variable "repo_docker" {
 }
 
 variable "dataform_git_url" {
-  description = "HTTPS URL of the GitHub repository connected to Dataform"
+  description = "HTTPS URL of the GitHub repository with sqlx at the repo root (credit_detect_dataform). Do not use credit_detect; Dataform only compiles definitions/ at the root."
   type        = string
-  default     = "https://github.com/Ysakairi/credit_detect.git"
+  default     = "https://github.com/Ysakairi/credit_detect_dataform.git"
+
+  validation {
+    condition     = !can(regex("/credit_detect(\\.git)?/?$", var.dataform_git_url))
+    error_message = "Dataform Git URL must be credit_detect_dataform (sqlx at repo root), not credit_detect."
+  }
 }
 
 variable "dataform_github_token_secret" {
-  description = "Secret Manager version resource name for the GitHub PAT used by Dataform. Leave empty to create the repository without a git remote."
+  description = "Secret Manager version for the GitHub PAT. Empty uses projects/<project_id>/secrets/dataform-github-token/versions/latest. Do not put this in terraform.tfvars unless overriding."
   type        = string
   default     = ""
   sensitive   = true
+
+  validation {
+    condition = var.dataform_github_token_secret == "" || can(regex(
+      "^projects/[^/]+/secrets/[^/]+/versions/[^/]+$",
+      var.dataform_github_token_secret,
+    ))
+    error_message = "dataform_github_token_secret must be empty (use the default dataform-github-token secret) or a Secret Manager version name (projects/.../secrets/.../versions/...)."
+  }
 }
 
 resource "google_project_service_identity" "dataform" {
@@ -62,6 +75,16 @@ resource "google_project_service_identity" "dataform" {
 
 locals {
   dataform_sa = "serviceAccount:${google_project_service_identity.dataform.email}"
+  # Always attach Git. Empty tfvars token → standard secret path for this project.
+  dataform_github_token_secret = (
+    var.dataform_github_token_secret != ""
+    ? var.dataform_github_token_secret
+    : "projects/${var.project_id}/secrets/dataform-github-token/versions/latest"
+  )
+  dataform_github_token_secret_id = regex(
+    "secrets/([^/]+)/",
+    local.dataform_github_token_secret,
+  )
   apis = [
     "bigquery.googleapis.com",
     "run.googleapis.com",
@@ -232,6 +255,16 @@ resource "google_cloud_run_v2_job_iam_member" "workflows_job_developer" {
 # ==========================================
 # 4. Dataform リポジトリ
 # ==========================================
+resource "google_secret_manager_secret_iam_member" "dataform_github_token_accessor" {
+  project   = var.project_id
+  secret_id = local.dataform_github_token_secret_id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = local.dataform_sa
+  depends_on = [
+    google_project_service_identity.dataform,
+  ]
+}
+
 resource "google_dataform_repository" "fraud_pipeline_repo" {
   provider     = google-beta
   project      = var.project_id
@@ -241,15 +274,15 @@ resource "google_dataform_repository" "fraud_pipeline_repo" {
   depends_on = [
     google_project_service.apis,
     google_project_service_identity.dataform,
+    google_secret_manager_secret_iam_member.dataform_github_token_accessor,
   ]
 
-  dynamic "git_remote_settings" {
-    for_each = var.dataform_github_token_secret == "" ? [] : [1]
-    content {
-      url                                 = var.dataform_git_url
-      default_branch                      = "main"
-      authentication_token_secret_version = var.dataform_github_token_secret
-    }
+  # Always set Git so apply cannot leave the repo unlinked. Defaults match
+  # the production remote (credit_detect_dataform / main / dataform-github-token).
+  git_remote_settings {
+    url                                 = var.dataform_git_url
+    default_branch                      = "main"
+    authentication_token_secret_version = local.dataform_github_token_secret
   }
 }
 
