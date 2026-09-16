@@ -240,7 +240,11 @@ class WorkflowTerraformTest(unittest.TestCase):
         self.assertIn("type: OAuth2", self.workflow)
         self.assertIn("/compilationResults", self.workflow)
         self.assertIn("/workflowInvocations", self.workflow)
-        self.assertIn('compilation_status.body.state == "SUCCEEDED"', self.workflow)
+        # CompilationResult v1 has no state; WorkflowInvocation still does.
+        self.assertNotIn("compilation_status.body.state", self.workflow)
+        self.assertIn("compilation_status.body.compilationErrors", self.workflow)
+        self.assertIn("compilation_status.body.dataformCoreVersion", self.workflow)
+        self.assertIn("compilation_status.body.resolvedGitCommitSha", self.workflow)
         self.assertIn('invocation_status.body.state == "SUCCEEDED"', self.workflow)
         self.assertIn("FAILED", self.workflow)
 
