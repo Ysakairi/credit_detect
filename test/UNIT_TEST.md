@@ -116,6 +116,7 @@ Google Cloud へ `main` をデプロイする前に、Cloud Run Job・評価カ�
 | UT-TF-14 | 非 root コンテナ | Dockerfile | `USER appuser` かつ uid 1001 | 同上 |
 | UT-TF-15 | シークレット非埋め込み | アプリソース走査 | サービスアカウントキー JSON や PEM 秘密鍵ヘッダなし | 同上 |
 | UT-TF-16 | gitignore | `.gitignore` | `*.tfstate` と `*.tfvars`（example は例外） | 同上 |
+| UT-TF-17 | 既存リソースの import | `import_existing.sh` | 409 になる SA / dataset / Dataform を import。`destroy` しない | 同上 |
 
 ## 5. 実施手順
 
