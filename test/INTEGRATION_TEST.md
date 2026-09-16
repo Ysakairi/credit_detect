@@ -86,7 +86,7 @@ IT-ING-05/06 は Job を動かすため既定 OFF。`RUN_INGEST_JOB=1` のとき
 
 | ID | 試験項目 | 手順 | 期待結果 | スクリプト |
 | --- | --- | --- | --- | --- |
-| IT-DF-01 | コンパイル（任意） | `RUN_DATAFORM_COMPILE=1` | compilation state = SUCCEEDED（Git 未接続なら SKIP） | 同上 |
+| IT-DF-01 | コンパイル（任意） | `RUN_DATAFORM_COMPILE=1` | `compilationErrors` が空（Git 未接続なら SKIP） | 同上 |
 | IT-DF-INIT | initial_setup（任意） | `RUN_INITIAL_SETUP=1` | train / validation / model が作成される | 同上 |
 | IT-ML-01 | モデル存在 | `dwh_prod.ulb_fraud_detection_model` | モデルが存在する。無ければ SKIP（日次の前提不足） | 同上 |
 | IT-ML-02 | 日次テーブル | Batch / daily_converted / predictions | テーブルが存在し、predictions は Date 1〜31 | 同上 |

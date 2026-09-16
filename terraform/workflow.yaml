@@ -6,6 +6,8 @@
 # 実行 SA は sa-workflows-orchestrator（run.developer + dataform.editor）。
 # jobs.run / compilationResults.create は非同期のため、完了をポーリングする。
 # poll 10s × 60 回 = 600s は Cloud Run Job timeout と揃えて打ち切る。
+# CompilationResult v1 に state は無い。完了は dataformCoreVersion /
+# resolvedGitCommitSha、失敗は compilationErrors（空配列は JSON から省略されうる）。
 
 main:
   steps:
@@ -127,10 +129,10 @@ main:
 
     - check_compilation:
         switch:
-          - condition: $${compilation_status.body.state == "SUCCEEDED"}
+          - condition: $${len(default(compilation_status.body.compilationErrors, [])) > 0}
+            raise: '$${"Dataform compilation failed: " + default(compilation_status.body.compilationErrors[0].message, "unknown compilation error")}'
+          - condition: $${default(compilation_status.body.dataformCoreVersion, "") != "" or default(compilation_status.body.resolvedGitCommitSha, "") != ""}
             next: reset_poll_for_invoke
-          - condition: $${compilation_status.body.state == "FAILED" or compilation_status.body.state == "CANCELLED"}
-            raise: '$${"Dataform compilation failed: " + default(compilation_status.body.errorStatus.message, compilation_status.body.state)}'
           - condition: $${poll_count >= max_polls}
             raise: "Timed out waiting for Dataform compilation"
         next: wait_for_compilation
