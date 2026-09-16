@@ -1,5 +1,18 @@
-#!/usr/bin/env python3
-"""Deploy FraudInvestigationAgent to Vertex AI Agent Engine (Reasoning Engine)."""
+"""FraudInvestigationAgent を Vertex AI Agent Engine へデプロイする。
+
+【Agent Engine 上の位置づけ】
+ローカルの ``FraudInvestigationAgent`` インスタンスを ``agent_engines.create`` に渡し、
+リモートの ``set_up()`` / ``query()`` エンドポイントを作る。pickle されるのはクラスの
+スカラーだけなので、実行時 import に必要な ``agent/`` ``evaluate/`` ``knowledge/`` を
+extra_packages で同梱する。evaluate を落とすと Analyzer が SOP カーネルを読めない。
+
+SDK 名は Agent Engine ← Reasoning Engine へ移行中のため、新 API 失敗時は preview
+の ReasoningEngine.create へ倒す。失敗を即終了にすると Path B の構築手順が止まる。
+
+【主な関数構成】
+- parse_args: プロジェクト / バケット / モデル
+- deploy: vertexai.init → create → リソース名を表示
+"""
 
 from __future__ import annotations
 
@@ -27,6 +40,11 @@ REQUIREMENTS = [
 
 
 def parse_args() -> argparse.Namespace:
+    """デプロイ先と表示名を環境変数から取る。IaC と CLI で同じ変数名を共有するため。
+
+    Returns:
+        argparse.Namespace（project_id, location, staging_bucket, model_name, dataset, display_name）。
+    """
     parser = argparse.ArgumentParser()
     parser.add_argument("--project-id", default=os.environ.get("PROJECT_ID"))
     parser.add_argument("--location", default=os.environ.get("LOCATION", "asia-northeast1"))
@@ -42,6 +60,18 @@ def parse_args() -> argparse.Namespace:
 
 
 def deploy(args: argparse.Namespace):
+    """エージェントを Agent Engine に登録し、Cloud Run が設定すべきリソース名を返す。
+
+    staging_bucket 必須は、SDK がソースと依存を GCS 経由でリモートへ渡すため。
+    backend は ``local`` 固定。リモート内側は常に Vertex+BQ であり、UI の
+    reasoning_engine 切替とは別レイヤ。
+
+    Args:
+        args: parse_args() の結果。
+
+    Returns:
+        デプロイ済みリソース名（REASONING_ENGINE_RESOURCE_NAME に設定する値）。
+    """
     if not args.project_id or not args.staging_bucket:
         raise SystemExit("PROJECT_ID と STAGING_BUCKET (gs://...) が必要です")
 
