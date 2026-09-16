@@ -1,4 +1,16 @@
-"""Prompt templates for each LangGraph node."""
+"""LangGraph 各ノードへ渡す指示文テンプレート。
+
+【Agent Engine 上の位置づけ】
+Gemini への唯一の「役割定義」置き場。ノード実装（graph.py）にプロンプトを散らすと、
+Agent Engine 上で SQL 幻覚や採点基準のずれが起きたときに修正箇所が分からなくなる。
+スキーマカタログは毎回 ``schema_prompt`` で注入する。モデルにテーブル名を記憶させない。
+
+【主な関数構成】
+- planner_prompt: 指示を 3 系統（データ / 規程 / 統計）に分解させる
+- sql_gen_prompt: 読み取り SQL 1 本。エラーと critique を再注入する
+- reflection_prompt: JSON 採点。捏造禁止と SOP 指標を固定する
+- output_prompt: 監査 4 見出しと是正 SELECT を強制する
+"""
 
 from __future__ import annotations
 
@@ -14,6 +26,15 @@ PLANNER_SYSTEM = """あなたはクレジットカード不正対策のリード
 
 
 def planner_prompt(user_query: str, config: AgentConfig) -> str:
+    """計画を短く固定し、後段 SQL が「存在しないテーブル」を引き継がないようにする。
+
+    Args:
+        user_query: アナリスト指示。
+        config: 実テーブル FQDN を schema_prompt 経由で埋め込むため。
+
+    Returns:
+        Planner ノードへ渡す完成プロンプト。
+    """
     return f"""{PLANNER_SYSTEM}
 
 {schema_prompt(config)}
@@ -35,6 +56,21 @@ def sql_gen_prompt(
     sql_error: Optional[str] = None,
     critique: Optional[str] = None,
 ) -> str:
+    """失敗理由を同じコンテキストに載せ、Agent Engine 上の SQL リトライを意味ある修正にする。
+
+    複数ステートメント禁止は sql_guard と二重化している。モデルが `;` で DML を
+    連結してくる事例を、ガード到達前に減らすため。
+
+    Args:
+        user_query: 元の調査指示。
+        plan: Planner の手順。抽出条件の根拠にする。
+        config: スキーマと LIMIT 上限の注入元。
+        sql_error: 直前のガード/BQ エラー。初回は None。
+        critique: Reflection が要求した追加条件。十分判定後は呼び出し側が None にする。
+
+    Returns:
+        SQL Gen ノードへ渡す完成プロンプト。
+    """
     error_block = ""
     if sql_error:
         error_block = f"\n【前回の SQL エラー。標準SQLとして修正すること】\n{sql_error}\n"
@@ -65,6 +101,21 @@ def reflection_prompt(
     statistical_summary: Optional[Dict[str, Any]],
     generated_sql: Optional[str],
 ) -> str:
+    """監査人ロールで自己採点させる。規程と SOP 指標を入力に含め、空論の「十分」を防ぐ。
+
+    JSON のみを要求するのは parse_reflection がテキストからオブジェクトを拾うため。
+    score<80 なら次 SQL 条件を critique に書かせ、リトライを具体的にする。
+
+    Args:
+        user_query: 元指示。答えているかの判定基準。
+        policies: RAG ヒット。閾値条項の引用元。
+        row_count: SQL 件数。0 件を十分と誤認させないため。
+        statistical_summary: Analyzer の KS/IV/Cliff。
+        generated_sql: どの抽出条件だったかの再現用。
+
+    Returns:
+        Reflection ノードへ渡す完成プロンプト。
+    """
     policy_titles = [
         f"- {p.get('title') or p.get('doc_id')}: {(p.get('content') or '')[:400]}"
         for p in policies
@@ -100,6 +151,23 @@ def output_prompt(
     row_count: int,
     config: AgentConfig,
 ) -> str:
+    """監査 4 見出しを固定し、レポート品質をモデルの自由記述に委ねない。
+
+    是正は SELECT 提案まで。Agent Engine から BQ へ DML を出させない契約をプロンプトでも再掲する。
+    存在しない指標の捏造禁止は、統計サマリーが空（SQL 失敗）のときに特に効く。
+
+    Args:
+        user_query: 元指示。
+        policies: 照合結果に引用する規程抜粋。
+        statistical_summary: 第2章の根拠。
+        critique: 限界の正直な記載用。
+        generated_sql: 再現用。
+        row_count: サマリーの規模感。
+        config: 是正 SQL の対象テーブル FQDN。
+
+    Returns:
+        Output ノードへ渡す完成プロンプト。
+    """
     policy_excerpt = "\n\n".join(
         f"### {p.get('title')}\n{(p.get('content') or '')[:800]}" for p in policies
     )

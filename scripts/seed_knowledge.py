@@ -1,5 +1,14 @@
-#!/usr/bin/env python3
-"""Create the knowledge table and insert manuals as text-embedding-004 vectors."""
+"""規程 Markdown を埋め込み、``fraud_investigation_knowledge`` へ投入する。
+
+【Agent Engine 上の位置づけ】
+RAG ノードが空ヒットにならないための初期コーパス投入。グラフ実行パスは SELECT のみなので、
+書き込みをこのスクリプト（と UI アップロード）に隔離する。VECTOR INDEX 作成は行数が少ない
+と失敗するため必須にしない。失敗しても VECTOR_SEARCH はブルートフォースで動く。
+
+【主な関数構成】
+- parse_args: ソースディレクトリと追加ファイル
+- main: チャンク → dry-run または BQ upsert → 任意で IVF インデックス
+"""
 
 from __future__ import annotations
 
@@ -17,6 +26,11 @@ from agent.tools.knowledge_ingest import documents_from_directory, documents_fro
 
 
 def parse_args() -> argparse.Namespace:
+    """本番投入とチャンク確認（dry-run）を同じ入口にし、ID 設計の食い違いを防ぐ。
+
+    Returns:
+        プロジェクト設定とソースパスを含む Namespace。
+    """
     parser = argparse.ArgumentParser()
     parser.add_argument("--project-id", default=os.environ.get("PROJECT_ID"))
     parser.add_argument("--location", default=os.environ.get("LOCATION", "asia-northeast1"))
@@ -32,6 +46,13 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> None:
+    """チャンクを作り、dry-run ならメモリ検索、本番なら冪等 UPSERT する。
+
+    dry-run は GCP 無しで「0.85 / V14」がヒットするかを確認するため。
+
+    Returns:
+        None。進捗は stdout。
+    """
     args = parse_args()
     docs = documents_from_directory(Path(args.source_dir))
     for extra in args.file:

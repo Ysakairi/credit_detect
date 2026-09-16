@@ -1,5 +1,13 @@
-#!/usr/bin/env python3
-"""Run one investigation locally (mock or Vertex/BigQuery)."""
+"""Agent Engine に載せる前に、同じ ``query()`` 契約をローカルで 1 回試す。
+
+【Agent Engine 上の位置づけ】
+デプロイせずに Planner→Output の戻り値 dict を確認する。backend=mock なら CI と同じ
+経路、local なら Cloud Run Path A と同じ Vertex+BQ。Path B の遠隔 query は対象外。
+
+【主な関数構成】
+- parse_args: 調査文と backend
+- main: FraudInvestigationAgent.query を JSON で標準出力する
+"""
 
 from __future__ import annotations
 
@@ -17,6 +25,11 @@ from agent.config import AgentConfig
 
 
 def parse_args() -> argparse.Namespace:
+    """既定クエリを POL-SEC の 0.85/200 にし、プロンプトとフィクスチャの前提を揃える。
+
+    Returns:
+        query / backend / プロジェクト設定を含む Namespace。
+    """
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--query",
@@ -33,6 +46,11 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> None:
+    """query() の戻り値を pretty-print し、UI や Agent Engine クライアントと同じキーを目視する。
+
+    Returns:
+        None。結果は stdout。
+    """
     args = parse_args()
     config = AgentConfig(
         project_id=args.project_id,
