@@ -8,6 +8,7 @@
 # poll 10s × 60 回 = 600s は Cloud Run Job timeout と揃えて打ち切る。
 # CompilationResult v1 に state は無い。完了は dataformCoreVersion /
 # resolvedGitCommitSha、失敗は compilationErrors（空配列は JSON から省略されうる）。
+# default() は null にしか効かない。欠けたキーは map.get で読む（無いときは null）。
 
 main:
   steps:
@@ -127,11 +128,18 @@ main:
             max_delay: 16
             multiplier: 2
 
+    - assign_compilation_fields:
+        assign:
+          # proto3 JSON は空の repeated を省略する。ドット参照すると KeyError になる。
+          - compilation_errors: $${default(map.get(compilation_status.body, "compilationErrors"), [])}
+          - compilation_core_version: $${default(map.get(compilation_status.body, "dataformCoreVersion"), "")}
+          - compilation_git_sha: $${default(map.get(compilation_status.body, "resolvedGitCommitSha"), "")}
+
     - check_compilation:
         switch:
-          - condition: $${len(default(compilation_status.body.compilationErrors, [])) > 0}
-            raise: '$${"Dataform compilation failed: " + default(compilation_status.body.compilationErrors[0].message, "unknown compilation error")}'
-          - condition: $${default(compilation_status.body.dataformCoreVersion, "") != "" or default(compilation_status.body.resolvedGitCommitSha, "") != ""}
+          - condition: $${len(compilation_errors) > 0}
+            raise: '$${"Dataform compilation failed: " + default(map.get(compilation_errors[0], "message"), "unknown compilation error")}'
+          - condition: $${compilation_core_version != "" or compilation_git_sha != ""}
             next: reset_poll_for_invoke
           - condition: $${poll_count >= max_polls}
             raise: "Timed out waiting for Dataform compilation"
