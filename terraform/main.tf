@@ -136,6 +136,14 @@ resource "google_service_account" "workflows_sa" {
   depends_on   = [google_project_service.apis]
 }
 
+# Dataform strict act-as: デフォルトの gcp-sa-dataform では invocation できない。
+# BQ 実行用のカスタム SA。Workflows と Dataform エージェントがこれを actAs する。
+resource "google_service_account" "dataform_runner" {
+  account_id   = "sa-dataform-runner"
+  display_name = "Custom service account for Dataform workflow invocations"
+  depends_on   = [google_project_service.apis]
+}
+
 resource "google_service_account" "scheduler_sa" {
   account_id   = "sa-scheduler-trigger"
   display_name = "Service Account for Cloud Scheduler to trigger Workflows"
@@ -189,6 +197,44 @@ resource "google_project_iam_member" "dataform_bq_data_viewer" {
     google_project_service_identity.dataform,
     google_dataform_repository.fraud_pipeline_repo,
   ]
+}
+
+resource "google_bigquery_dataset_iam_member" "dataform_runner_bq_editor" {
+  dataset_id = google_bigquery_dataset.dwh_prod.dataset_id
+  role       = "roles/bigquery.dataEditor"
+  member     = "serviceAccount:${google_service_account.dataform_runner.email}"
+}
+
+resource "google_project_iam_member" "dataform_runner_bq_job_user" {
+  project = var.project_id
+  role    = "roles/bigquery.jobUser"
+  member  = "serviceAccount:${google_service_account.dataform_runner.email}"
+}
+
+resource "google_project_iam_member" "dataform_runner_bq_data_viewer" {
+  project = var.project_id
+  role    = "roles/bigquery.dataViewer"
+  member  = "serviceAccount:${google_service_account.dataform_runner.email}"
+}
+
+resource "google_service_account_iam_member" "workflows_act_as_dataform_runner" {
+  service_account_id = google_service_account.dataform_runner.name
+  role               = "roles/iam.serviceAccountUser"
+  member             = "serviceAccount:${google_service_account.workflows_sa.email}"
+}
+
+resource "google_service_account_iam_member" "dataform_agent_act_as_runner" {
+  service_account_id = google_service_account.dataform_runner.name
+  role               = "roles/iam.serviceAccountUser"
+  member             = local.dataform_sa
+  depends_on         = [google_project_service_identity.dataform]
+}
+
+resource "google_service_account_iam_member" "dataform_agent_token_creator" {
+  service_account_id = google_service_account.dataform_runner.name
+  role               = "roles/iam.serviceAccountTokenCreator"
+  member             = local.dataform_sa
+  depends_on         = [google_project_service_identity.dataform]
 }
 
 # ==========================================
@@ -273,6 +319,7 @@ resource "google_dataform_repository" "fraud_pipeline_repo" {
   region       = var.region
   name         = "fraud-pipeline-repo"
   display_name = "Credit fraud detection pipeline"
+  service_account = google_service_account.dataform_runner.email
   depends_on = [
     google_project_service.apis,
     google_project_service_identity.dataform,
@@ -300,13 +347,17 @@ resource "google_workflows_workflow" "fraud_detection_pipeline" {
     google_project_service.apis,
     google_cloud_run_v2_job.daily_ingest,
     google_dataform_repository.fraud_pipeline_repo,
+    google_service_account_iam_member.workflows_act_as_dataform_runner,
+    google_service_account_iam_member.dataform_agent_act_as_runner,
+    google_service_account_iam_member.dataform_agent_token_creator,
   ]
 
   # Workflows 式は workflow.yaml 側で $${} エスケープ済み
   source_contents = templatefile("${path.module}/workflow.yaml", {
-    project_id    = var.project_id
-    region        = var.region
-    dataform_repo = google_dataform_repository.fraud_pipeline_repo.name
+    project_id             = var.project_id
+    region                 = var.region
+    dataform_repo          = google_dataform_repository.fraud_pipeline_repo.name
+    dataform_execution_sa  = google_service_account.dataform_runner.email
   })
 }
 

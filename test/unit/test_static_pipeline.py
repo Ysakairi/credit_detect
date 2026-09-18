@@ -248,7 +248,9 @@ class WorkflowTerraformTest(unittest.TestCase):
         self.assertIn('map.get(compilation_status.body, "compilationErrors")', self.workflow)
         self.assertIn('map.get(compilation_status.body, "dataformCoreVersion")', self.workflow)
         self.assertIn('map.get(compilation_status.body, "resolvedGitCommitSha")', self.workflow)
-        self.assertIn('invocation_status.body.state == "SUCCEEDED"', self.workflow)
+        self.assertNotIn("invocation_status.body.state", self.workflow)
+        self.assertIn('map.get(invocation_status.body, "state")', self.workflow)
+        self.assertIn('serviceAccount: "${dataform_execution_sa}"', self.workflow)
         self.assertIn("FAILED", self.workflow)
 
     def test_daily_batch_tag_only(self):
@@ -266,6 +268,8 @@ class WorkflowTerraformTest(unittest.TestCase):
     def test_dataform_repository_resource(self):
         self.assertIn("google_dataform_repository", self.tf)
         self.assertIn("fraud-pipeline-repo", self.tf)
+        self.assertIn("sa-dataform-runner", self.tf)
+        self.assertIn("service_account = google_service_account.dataform_runner.email", self.tf)
 
     def test_dataform_git_url_defaults_to_dataform_repo(self):
         self.assertIn(
@@ -327,6 +331,10 @@ class WorkflowTerraformTest(unittest.TestCase):
         self.assertIn("dataform_bq_job_user", self.tf)
         self.assertIn("dataform_bq_data_viewer", self.tf)
         self.assertIn("roles/bigquery.dataViewer", self.tf)
+        self.assertIn("dataform_runner_bq_job_user", self.tf)
+        self.assertIn("roles/iam.serviceAccountUser", self.tf)
+        self.assertIn("roles/iam.serviceAccountTokenCreator", self.tf)
+        self.assertIn("workflows_act_as_dataform_runner", self.tf)
 
     def test_cloud_run_timeout_and_retries(self):
         self.assertIn('timeout         = "600s"', self.tf)

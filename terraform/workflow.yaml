@@ -4,6 +4,7 @@
 #
 # GCP: Cloud Workflows が Cloud Run Jobs と Dataform を直列起動する。
 # 実行 SA は sa-workflows-orchestrator（run.developer + dataform.editor）。
+# Dataform invocation は strict act-as のため sa-dataform-runner を指定する。
 # jobs.run / compilationResults.create は非同期のため、完了をポーリングする。
 # poll 10s × 60 回 = 600s は Cloud Run Job timeout と揃えて打ち切る。
 # CompilationResult v1 に state は無い。完了は dataformCoreVersion /
@@ -65,14 +66,19 @@ main:
             max_delay: 16
             multiplier: 2
 
+    - assign_job_fields:
+        assign:
+          - job_completion_time: $${map.get(job_status.status, "completionTime")}
+          - job_conditions: $${default(map.get(job_status.status, "conditions"), [])}
+
     - check_job_status:
         switch:
-          - condition: $${job_status.status.completionTime == null}
+          - condition: $${job_completion_time == null}
             next: check_job_poll_limit
-          - condition: $${job_status.status.conditions[0].status == "True"}
+          - condition: $${len(job_conditions) > 0 and default(map.get(job_conditions[0], "status"), "") == "True"}
             next: reset_poll_for_compile
           - condition: true
-            raise: '$${"Cloud Run Job failed: " + default(job_status.status.conditions[0].message, "unknown error")}'
+            raise: '$${"Cloud Run Job failed: " + if(len(job_conditions) > 0, default(map.get(job_conditions[0], "message"), "unknown error"), "unknown error")}'
 
     - check_job_poll_limit:
         switch:
@@ -160,6 +166,7 @@ main:
             body:
               compilationResult: $${compilation_status.body.name}
               invocationConfig:
+                serviceAccount: "${dataform_execution_sa}"
                 includedTags:
                   - "daily_batch"
                 transitiveDependenciesIncluded: true
@@ -197,12 +204,16 @@ main:
             max_delay: 16
             multiplier: 2
 
+    - assign_invocation_fields:
+        assign:
+          - invocation_state: $${default(map.get(invocation_status.body, "state"), "")}
+
     - check_invocation:
         switch:
-          - condition: $${invocation_status.body.state == "SUCCEEDED"}
+          - condition: $${invocation_state == "SUCCEEDED"}
             next: return_result
-          - condition: $${invocation_status.body.state == "FAILED" or invocation_status.body.state == "CANCELLED"}
-            raise: '$${"Dataform invocation failed: " + invocation_status.body.state}'
+          - condition: $${invocation_state == "FAILED" or invocation_state == "CANCELLED"}
+            raise: '$${"Dataform invocation failed: " + invocation_state}'
           - condition: $${poll_count >= max_polls}
             raise: "Timed out waiting for Dataform invocation"
         next: wait_for_invocation
