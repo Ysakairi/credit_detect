@@ -100,7 +100,7 @@ Google Cloud へ `main` をデプロイする前に、Cloud Run Job・評価カ�
 | UT-TF-01 | templatefile 用エスケープ | `workflow.yaml` | Workflows 式が `$${...}`。`${compilation_result` の生埋め込みなし | `unit/test_static_pipeline.py` |
 | UT-TF-02 | Job の location | `run_ingestion_job` | `location: ${region}` | 同上 |
 | UT-TF-03 | Job 完了ポーリング | `wait_for_job` / `get_job_status` | `completionTime` と失敗時 raise、最大 60 poll。`executions.get` は `namespaces/{namespace}/executions/{name}`（短い ID だけだと 404） | 同上 |
-| UT-TF-04 | Dataform 非同期待ち | compile / invoke | `http.post`/`http.get` で Dataform v1 を呼ぶ。compile の省略キーは `map.get`（`default` のドット参照は KeyError）。`compilationErrors` が空かつ `dataformCoreVersion` / `resolvedGitCommitSha` で完了判定。invoke は `state=SUCCEEDED` まで待機 | 同上 |
+| UT-TF-04 | Dataform 非同期待ち | compile / invoke | `http.post`/`http.get` で Dataform v1 を呼ぶ。省略キーは `map.get`。compile は `compilationErrors` / `dataformCoreVersion` / `resolvedGitCommitSha`。invoke は `state` を `map.get`。Job の `completionTime` も `map.get` | 同上 |
 | UT-TF-05 | 日次タグのみ | `execute_dataform` | `includedTags: daily_batch`。`initial_setup` を日次で回さない | 同上 |
 | UT-TF-06 | gitCommitish | compile body | `"main"` | 同上 |
 | UT-TF-07 | 一時障害リトライ | GCP API ステップ | `http.default_retry_predicate`（Workflows 組み込み。`retry.transient_errors` は未定義） | 同上 |
@@ -112,6 +112,7 @@ Google Cloud へ `main` をデプロイする前に、Cloud Run Job・評価カ�
 | UT-TF-10 | Scheduler SA 分離 | `main.tf` | `sa-scheduler-trigger` と `workflows.invoker` | 同上 |
 | UT-TF-11 | Job ポーリング権限 | `main.tf` | Job に `roles/run.developer` | 同上 |
 | UT-TF-12 | Dataform SA の BQ 権限 | `main.tf` | サービス ID + dataEditor + jobUser + dataViewer | 同上 |
+| UT-TF-12a | Dataform strict act-as | `main.tf` / `workflow.yaml` | カスタム SA `sa-dataform-runner`。リポジトリと `invocationConfig.serviceAccount` に設定。Workflows SA と Dataform エージェントへ `serviceAccountUser`、エージェントへ `serviceAccountTokenCreator` | 同上 |
 | UT-TF-13 | Cloud Run timeout / retry | `google_cloud_run_v2_job` | timeout 600s、max_retries 3、memory 1Gi | 同上 |
 | UT-TF-14 | 非 root コンテナ | Dockerfile | `USER appuser` かつ uid 1001 | 同上 |
 | UT-TF-15 | シークレット非埋め込み | アプリソース走査 | サービスアカウントキー JSON や PEM 秘密鍵ヘッダなし | 同上 |

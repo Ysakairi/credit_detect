@@ -723,6 +723,7 @@ gcloud run jobs execute daily-ingest-job --region=asia-northeast1 --wait
 
 失敗しやすい点:
 
+- `Service account must be set when strict act as checks are enabled` → Dataform がカスタム実行 SA を要求する。`sa-dataform-runner` をリポジトリと `invocationConfig.serviceAccount` に設定し、⑤ を apply する
 - terraform apply が `serviceusage.services.list` で 403 → Service Usage / Cloud Resource Manager を gcloud で有効化し、ADC をやり直す
 - terraform apply が Dataform SA `does not exist` → ⑤ の `gcloud beta services identity create --service=dataform.googleapis.com` を実行してから再 apply
 - `--tag` のプロジェクト ID がプレースホルダのまま → ① の `gcloud config` と一致させる
